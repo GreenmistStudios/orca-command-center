@@ -556,4 +556,4 @@ verifies everything together on real data.
 
 | Feature | Plan | Tasks | Status |
 |---|---|---|---|
-| Token Flow — per-call token ledger, cost, burn rate, workflow/run/fleet rollups, animated in/out flow | [`features/token-flow/Plan.md`](features/token-flow/Plan.md) | Task-18 … Task-28 (`features/token-flow/tasks/`) | in progress on `geoff-powell/token-flow` |
+| Token Flow — per-call token ledger, cost, burn rate, workflow/run/fleet rollups, animated in/out flow | [`features/token-flow/Plan.md`](features/token-flow/Plan.md) | Task-18 … Task-28 + Task-20b (`features/token-flow/tasks/`) | complete on `geoff-powell/token-flow` (reviewed, all gates green; not merged) |
