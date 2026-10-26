@@ -10,7 +10,7 @@ describe('parseCli', () => {
 
   it('applies defaults', () => {
     const o = parseCli([]) as CliOptions
-    expect(o).toMatchObject({ port: 4270, host: '127.0.0.1', windowHours: 24, pollMs: 750, orcaPollMs: 5000, ringSize: 20000, noOpen: false, dev: false })
+    expect(o).toMatchObject({ port: 4270, host: '127.0.0.1', windowHours: 24, pollMs: 750, orcaPollMs: 5000, orcaTimeoutMs: 15000, ringSize: 20000, noOpen: false, dev: false })
   })
   it('parses values and flags', () => {
     const o = parseCli(['--port', '4271', '--no-open', '--no-copilot', '--mcp-servers', 'a, b', '--opencode-db', '/x.db']) as CliOptions

@@ -3,7 +3,7 @@ import type { CliRunner, OrcaCliSource, OrcaCliUpdate, SourceDeps } from '../../
 import { parseStatus, parseTerminals, parseWorktrees } from './parse.js'
 import { assertAllowed, defaultCliRunner } from './runner.js'
 
-const TIMEOUT_MS = 3000
+const DEFAULT_TIMEOUT_MS = 15_000
 const MAX_BUFFER = 16 * 1024 * 1024
 const CLEAR_AFTER = 3
 
@@ -59,7 +59,7 @@ export function createOrcaCliSource(deps: SourceDeps & { runner?: CliRunner }): 
 
   async function run(args: string[]): Promise<string> {
     assertAllowed(args)
-    const r = await runner(exe as string, args, { timeoutMs: TIMEOUT_MS, maxBuffer: MAX_BUFFER })
+    const r = await runner(exe as string, args, { timeoutMs: config.orcaTimeoutMs ?? DEFAULT_TIMEOUT_MS, maxBuffer: MAX_BUFFER })
     if (r.exitCode !== 0 && r.stdout.trim() === '') {
       throw new Error(r.stderr.trim().split('\n')[0] || `orca exited with code ${r.exitCode ?? 'unknown'}`)
     }
