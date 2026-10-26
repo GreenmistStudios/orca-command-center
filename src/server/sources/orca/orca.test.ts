@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Config, SourceDeps } from '../../types.js'
 import type { ActivityEvent, HookEntry } from '../../../shared/contract.js'
 import { parseStatus, parseTerminals, parseWorktrees } from './parse.js'
-import { createOrcaCliSource } from './cli-source.js'
+import { START_WAIT_MS, createOrcaCliSource } from './cli-source.js'
 import { createOrcaHooksSource } from './hooks-source.js'
 import { CLI_ALLOWLIST, assertAllowed } from './runner.js'
 import {
@@ -89,6 +89,25 @@ describe('cli source', () => {
     await s.stop()
   })
 
+  it('start() does not block server boot on a hung first poll', async () => {
+    const r = healthyResponses()
+    r['status --json'] = (n) => ({ stdout: STATUS_JSON, delayMs: n === 0 ? 10_000 : 0 })
+    const runner = fakeRunner(r)
+    const s = createOrcaCliSource({ ...mkDeps({}), runner })
+    const ups: string[] = []
+    s.subscribe((u) => ups.push(u.type))
+    let started = false
+    void s.start().then(() => { started = true })
+    await vi.advanceTimersByTimeAsync(START_WAIT_MS)
+    expect(started).toBe(true)
+    expect(s.status().checkedAt).toBe(0)
+    // Nothing is published while the first poll is unresolved — no false "not running".
+    expect(ups).toEqual([])
+    await vi.advanceTimersByTimeAsync(12_000)
+    expect(s.status().running).toBe(true)
+    await s.stop()
+  })
+
   it('does not overlap slow calls', async () => {
     const r = healthyResponses()
     r['status --json'] = (n) => ({ stdout: STATUS_JSON, delayMs: n === 0 ? 12000 : 0 })
@@ -120,6 +139,49 @@ describe('cli source', () => {
     runner.setResponses(healthyResponses())
     await vi.advanceTimersByTimeAsync(5000)
     expect(s.health().status).toBe('ok')
+    await s.stop()
+  })
+
+  it('boot timeout then success within retries: first emitted status is running', async () => {
+    const r = healthyResponses()
+    r['status --json'] = (n) => (n < 2 ? { throws: 'timed out after 3000 ms' } : { stdout: STATUS_JSON })
+    const runner = fakeRunner(r)
+    const s = createOrcaCliSource({ ...mkDeps({}), runner })
+    const ups: Array<{ type: string; running?: boolean }> = []
+    s.subscribe((u) => ups.push({ type: u.type, running: u.type === 'status' ? u.status.running : undefined }))
+    const p = s.start()
+    await vi.advanceTimersByTimeAsync(2000)
+    await p
+    expect(ups[0]).toEqual({ type: 'status', running: true })
+    expect(s.status().running).toBe(true)
+    await s.stop()
+  })
+
+  it('boot: reports unreachable after retries are exhausted', async () => {
+    const runner = fakeRunner({ ...healthyResponses(), 'status --json': { throws: 'timed out after 3000 ms' } })
+    const s = createOrcaCliSource({ ...mkDeps({}), runner })
+    const p = s.start()
+    await vi.advanceTimersByTimeAsync(5000)
+    await p
+    expect(runner.calls.filter((c) => c[0] === 'status')).toHaveLength(4)
+    expect(s.status()).toMatchObject({ running: false, reachable: false, error: 'timed out after 3000 ms' })
+    await s.stop()
+  })
+
+  it('previously running: 1-2 timeouts keep running with error; 3 report not running', async () => {
+    const runner = fakeRunner(healthyResponses())
+    const s = createOrcaCliSource({ ...mkDeps({}), runner })
+    await s.start()
+    runner.setResponses({ ...healthyResponses(), 'status --json': { throws: 'timed out after 3000 ms' } })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(s.status()).toMatchObject({ running: true, pid: 4242, error: 'timed out after 3000 ms' })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(s.status()).toMatchObject({ running: true, error: 'timed out after 3000 ms' })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(s.status()).toMatchObject({ running: false, reachable: false, pid: null })
+    runner.setResponses(healthyResponses())
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(s.status()).toMatchObject({ running: true, error: null })
     await s.stop()
   })
 

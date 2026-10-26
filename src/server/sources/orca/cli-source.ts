@@ -6,6 +6,11 @@ import { assertAllowed, defaultCliRunner } from './runner.js'
 const TIMEOUT_MS = 3000
 const MAX_BUFFER = 16 * 1024 * 1024
 const CLEAR_AFTER = 3
+const MAX_FAILURES = 3
+const BOOT_RETRIES = 3
+const BOOT_RETRY_MS = 750
+/** Max time start() waits for the first poll before letting the server boot (exported for tests). */
+export const START_WAIT_MS = 800
 
 const STATUS_ARGS = ['status', '--json']
 const WORKTREE_ARGS = ['worktree', 'ps', '--json']
@@ -32,7 +37,7 @@ export function createOrcaCliSource(deps: SourceDeps & { runner?: CliRunner }): 
 
   let status: OrcaStatus = exe === null
     ? disabledStatus()
-    : { running: false, reachable: false, pid: null, version: null, runtimeState: null, checkedAt: now(), error: null }
+    : { running: false, reachable: false, pid: null, version: null, runtimeState: null, checkedAt: 0, error: null }
   let worktrees: WorktreeInfo[] = []
   let terminals: TerminalInfo[] = []
   let fleetKey = JSON.stringify([worktrees, terminals])
@@ -42,6 +47,8 @@ export function createOrcaCliSource(deps: SourceDeps & { runner?: CliRunner }): 
   let lastChangeAt: number | null = null
   let lastGoodAt: number | null = null
   let notRunning = 0
+  let failures = 0
+  let hasGood = false
   let stopped = true
   let timer: ReturnType<typeof setTimeout> | null = null
   let inflight: Promise<void> | null = null
@@ -85,11 +92,46 @@ export function createOrcaCliSource(deps: SourceDeps & { runner?: CliRunner }): 
     emit({ type: 'fleet', worktrees, terminals })
   }
 
+  const sleep = (ms: number) =>
+    new Promise<void>((res) => {
+      const t = setTimeout(res, ms)
+      t.unref?.()
+    })
+
+  /** A failed poll is "unknown", not "not running": keep the last good status until MAX_FAILURES in a row. */
+  function onFailure(message: string) {
+    failures++
+    if (hasGood && failures < MAX_FAILURES) setStatus({ ...status, error: message, checkedAt: now() })
+    else setStatus({ running: false, reachable: false, pid: null, version: null, runtimeState: null, checkedAt: now(), error: message })
+  }
+
   async function poll(): Promise<void> {
+    for (let retry = 0; ; retry++) {
+      const ok = await pollOnce()
+      if (ok) {
+        failures = 0
+        break
+      }
+      if (hasGood || stopped) {
+        onFailure(errorMessage ?? 'error')
+        break
+      }
+      if (retry >= BOOT_RETRIES) {
+        onFailure(errorMessage ?? 'error')
+        break
+      }
+      await sleep(BOOT_RETRY_MS)
+      if (stopped) break
+    }
+    lastReadAt = now()
+  }
+
+  async function pollOnce(): Promise<boolean> {
     try {
       const next = parseStatus(await run(STATUS_ARGS), now())
       if (next.error !== null) throw new Error(next.error)
       setStatus(next)
+      hasGood = true
       if (next.running && next.reachable) {
         notRunning = 0
         const [wt, tm] = await Promise.all([run(WORKTREE_ARGS), run(TERMINAL_ARGS)])
@@ -113,8 +155,9 @@ export function createOrcaCliSource(deps: SourceDeps & { runner?: CliRunner }): 
       healthStatus = 'error'
       errorMessage = e instanceof Error ? e.message : String(e)
       log.warn(`orca-cli poll failed: ${errorMessage}`)
+      return false
     }
-    lastReadAt = now()
+    return true
   }
 
   function schedule() {
@@ -140,7 +183,17 @@ export function createOrcaCliSource(deps: SourceDeps & { runner?: CliRunner }): 
       if (exe === null) return
       if (!stopped) return
       stopped = false
-      await tick()
+      // Don't hold up server boot on a slow or hung CLI: wait at most START_WAIT_MS for the first
+      // poll (normally ~0.2 s). Boot retries continue in the background and publish their status
+      // when they settle, so the first answer is still honest.
+      const first = tick().catch(() => undefined)
+      await Promise.race([
+        first,
+        new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, START_WAIT_MS)
+          t.unref?.()
+        }),
+      ])
     },
     async stop() {
       stopped = true

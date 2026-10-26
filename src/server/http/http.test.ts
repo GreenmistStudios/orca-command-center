@@ -117,6 +117,8 @@ describe('routes', () => {
   it('parses usage params', async () => {
     await fetch(`${base}/api/usage?scope=workflow&id=r1&windowHours=2&bucketMs=5000&middle=model`)
     expect(store.calls.usage!.at(-1)).toEqual({ scope: { kind: 'workflow', id: 'r1' }, windowMs: 7_200_000, bucketMs: 5000, middle: 'model' })
+    await fetch(`${base}/api/usage?scope=fleet&windowMinutes=15`)
+    expect(store.calls.usage!.at(-1)).toMatchObject({ windowMs: 900_000 })
     await fetch(`${base}/api/usage?scope=fleet`)
     expect(store.calls.usage!.at(-1)).toEqual({ scope: { kind: 'fleet', id: null }, windowMs: undefined, bucketMs: undefined, middle: undefined })
     await fetch(`${base}/api/usage/calls?scope=run&id=x&before=1:a&limit=10`)
@@ -127,7 +129,8 @@ describe('routes', () => {
 
   it('validates usage params', async () => {
     for (const q of ['/api/usage', '/api/usage?scope=nope', '/api/usage?scope=workflow', '/api/usage?scope=fleet&bogus=1',
-      '/api/usage?scope=fleet&windowHours=0', '/api/usage?scope=fleet&windowHours=721', '/api/usage?scope=fleet&bucketMs=999',
+      '/api/usage?scope=fleet&windowHours=0', '/api/usage?scope=fleet&windowHours=721', '/api/usage?scope=fleet&windowMinutes=0', '/api/usage?scope=fleet&windowMinutes=43201',
+      '/api/usage?scope=fleet&windowMinutes=1.5', '/api/usage?scope=fleet&windowMinutes=15&windowHours=1', '/api/usage?scope=fleet&bucketMs=999',
       '/api/usage?scope=fleet&bucketMs=86400001', '/api/usage?scope=fleet&middle=x', '/api/usage/calls?scope=session',
       '/api/usage/calls?scope=session&id=a&limit=0', '/api/usage/calls?scope=session&id=a&limit=2001']) {
       const res = await fetch(base + q)

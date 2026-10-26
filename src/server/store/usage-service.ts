@@ -24,7 +24,7 @@ const REPORT_TTL_MS = 2_000
 const MAX_ON_DEMAND = 300
 const FLUSH_MIN_MS = 500
 const CHUNK_MS = 25
-const CHUNK_IDS = 5
+const CHUNK_IDS = 1
 const MAX_CACHE = 64
 
 export interface UsageContext {
@@ -192,11 +192,11 @@ export class UsageService {
     if (this.stopped) return
     const t0 = performance.now()
     try {
-      while (this.queue.length && performance.now() - t0 < CHUNK_MS) {
+      do {
         const batch = this.queue.splice(0, CHUNK_IDS)
         for (const id of batch) this.queued.delete(id)
         this.loadSessions(batch)
-      }
+      } while (this.queue.length && performance.now() - t0 < CHUNK_MS)
     } catch (e) {
       this.ctx.log.warn('usage: seeding failed: %s', e instanceof Error ? e.message : String(e))
     }
@@ -343,16 +343,15 @@ export class UsageService {
     if (this.fleetCache?.key === key) return this.fleetCache.value
     const since = t - windowMs
     const totals = emptyTotals()
-    const inWindow: UsageSample[] = []
+    const lists: Array<readonly UsageSample[]> = []
     for (const id of ids) {
       const arr = this.ledger.samplesOf(id)
-      for (let i = lowerBoundTs(arr, since); i < arr.length; i++) {
-        addSample(totals, arr[i]!)
-        inWindow.push(arr[i]!)
-      }
+      for (let i = lowerBoundTs(arr, since); i < arr.length; i++) addSample(totals, arr[i]!)
+      lists.push(arr)
     }
-    inWindow.sort((a, b) => a.ts - b.ts)
-    const value = { totals, rates: ratesOf(inWindow, t, RATE_WINDOW_MS) }
+    // rates need only the last RATE_WINDOW_MS (clamped to the window): merge those slices
+    const recent = mergeSessionSamples(lists, Math.max(since, t - RATE_WINDOW_MS + 1))
+    const value = { totals, rates: ratesOf(recent, t, RATE_WINDOW_MS) }
     this.fleetCache = { key, value }
     return value
   }
@@ -411,7 +410,8 @@ export class UsageService {
     const since = windowMs === null ? undefined : t - windowMs
     const lists = resolved.ids.map((id) => this.ledger.samplesOf(id))
     const samples = mergeSessionSamples(lists, since)
-    const allSamples = since === undefined ? samples : mergeSessionSamples(lists)
+    // only the 5-minute rate window is needed; slice per session instead of merging all-time samples
+    const allSamples = mergeSessionSamples(lists, t - RATE_WINDOW_MS + 1)
     const idSet = new Set(resolved.ids)
     const estimates = this.ledger.estimates().filter((e) => idSet.has(e.sessionId))
     const withUsage = new Set(samples.map((s) => s.sessionId))

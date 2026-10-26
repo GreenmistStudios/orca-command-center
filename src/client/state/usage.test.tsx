@@ -8,7 +8,7 @@ import { mockBootstrap } from '../../../test/client/render'
 import { selectAutoUsageScope, selectFleetBurn, selectInFlight, selectSessionUsage } from './selectors'
 import { resetOccStore, USAGE_RING_MAX, usageReportKey, useOcc } from './store'
 import { usageBus } from './usage-bus'
-import { LiveUsageModel, sampleInScope, useLiveUsage, useUsageBurst, type UsageScopeCtx } from './usage-live'
+import { LiveUsageModel, METER_HOLD_MS, sampleInScope, useInFlightMeters, useLiveUsage, useUsageBurst, type UsageScopeCtx } from './usage-live'
 
 const st = () => useOcc.getState()
 const T0 = 1_800_000_000_000
@@ -314,5 +314,109 @@ describe('useLiveUsage / useUsageBurst', () => {
     renderHook(() => useUsageBurst(scope, (x) => got.push('id' in x ? x.id : `est:${x.sessionId}`)))
     usageFrame([smp('in1'), smp('out1', { sessionId: MOCK_IDS.blocked, rootId: MOCK_IDS.blocked })], [est(MOCK_IDS.coderViewModel), est(MOCK_IDS.blocked, { rootId: MOCK_IDS.blocked })])
     expect(got).toEqual(['in1', `est:${MOCK_IDS.coderViewModel}`])
+  })
+})
+
+
+describe('live corrections (re-sent ids)', () => {
+  const ctx = () => ({ sessions: st().sessions, orchestration: st().orchestration })
+  const scope: UsageScope = { kind: 'workflow', id: MOCK_IDS.rootBuild }
+
+  it('live id re-sent: identical → no change; changed → counted once with the new value', async () => {
+    const report: UsageReport = await baseReport(scope)
+    const m = new LiveUsageModel(report, scope, ctx())
+    const a = smp('dup-a', { ledgerSeq: report.ledgerSeq + 1, ts: T0 + 1000 })
+    m.ingest([a], T0 + 2000)
+    const s1 = m.snapshot(T0 + 2000)
+    m.ingest([{ ...a, ledgerSeq: a.ledgerSeq + 1 }], T0 + 2000)
+    expect(m.snapshot(T0 + 2000).totals).toEqual(s1.totals)
+    const b = { ...a, ledgerSeq: a.ledgerSeq + 2, tokens: { ...a.tokens, output: a.tokens.output + 1000 } }
+    m.ingest([b], T0 + 2000)
+    const s2 = m.snapshot(T0 + 2000)
+    expect(s2.totals.calls).toBe(s1.totals.calls)
+    expect(s2.totals.tokens.output).toBe(s1.totals.tokens.output + 1000)
+    expect(s2.totals.outflow).toBe(s1.totals.outflow + 1000)
+    expect(s2.byAgent.find((r) => r.key === 'sonnet-coder')!.totals.tokens.output).toBe(s1.byAgent.find((r) => r.key === 'sonnet-coder')!.totals.tokens.output + 1000)
+    expect(s2.series.buckets.reduce((n, x) => n + x.calls, 0)).toBe(s1.series.buckets.reduce((n, x) => n + x.calls, 0))
+    expect(s2.series.buckets.reduce((n, x) => n + x.output, 0)).toBe(s1.series.buckets.reduce((n, x) => n + x.output, 0) + 1000)
+    const sum = (r: UsageReport) => r.sankey.links.filter((l) => l.flow === 'output').reduce((n, l) => n + l.value, 0)
+    expect(sum(s2)).toBe(sum(s1) + 1000)
+  })
+
+  it('baseline recent id updated → only the difference', async () => {
+    const report: UsageReport = await baseReport(scope)
+    const old = report.recentCalls.at(-1)!
+    const m = new LiveUsageModel(report, scope, ctx())
+    m.ingest([{ ...old, ledgerSeq: report.ledgerSeq + 5 }], T0)
+    expect(m.snapshot(T0).totals).toEqual(report.totals)
+    m.ingest([{ ...old, ledgerSeq: report.ledgerSeq + 6, tokens: { ...old.tokens, input: old.tokens.input + 7 } }], T0)
+    const snap = m.snapshot(T0)
+    expect(snap.totals.calls).toBe(report.totals.calls)
+    expect(snap.totals.tokens.input).toBe(report.totals.tokens.input + 7)
+  })
+})
+
+describe('bus dedupe', () => {
+  it('exact re-emit at equal ledgerSeq is not re-emitted', () => {
+    const seen: UsageSample[] = []
+    usageBus.subscribe((ev) => seen.push(...ev.samples))
+    const a = smp('e1')
+    usageFrame([a]); usageFrame([{ ...a }])
+    expect(seen).toHaveLength(1)
+    usageFrame([{ ...a, tokens: { ...a.tokens, output: 1 } }])
+    expect(seen).toHaveLength(2)
+  })
+})
+
+describe('15m window', () => {
+  it('fetchUsageReport works end to end with windowMinutes', async () => {
+    await st().fetchUsageReport({ kind: 'fleet', id: null }, { windowMs: 15 * 60_000, force: true })
+    const l = st().usageReports[usageReportKey({ kind: 'fleet', id: null }, 15 * 60_000)]
+    expect(l?.status).toBe('ready')
+    expect(l?.data?.windowMs).toBe(15 * 60_000)
+  })
+  it('mock rejects both params / out of range', async () => {
+    const b = createMockBackend({ now: T0, live: false })
+    await expect(b.get('GET /api/usage', { params: { scope: 'fleet', windowHours: 1, windowMinutes: 15 } })).rejects.toBeTruthy()
+    await expect(b.get('GET /api/usage', { params: { scope: 'fleet', windowMinutes: 0 } })).rejects.toBeTruthy()
+    await expect(b.get('GET /api/usage', { params: { scope: 'fleet', windowMinutes: 43_201 } })).rejects.toBeTruthy()
+  })
+})
+
+describe('useInFlightMeters', () => {
+  const scope: UsageScope = { kind: 'workflow', id: MOCK_IDS.rootBuild }
+  const sid = MOCK_IDS.coderViewModel
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(T0) })
+
+  it('estimate → sample → metered entry → dropped after hold', () => {
+    const { result } = renderHook(() => useInFlightMeters(scope))
+    act(() => { usageFrame([], [est(sid, { startedAt: T0, estOutputTokens: 40 })]); vi.advanceTimersByTime(300) })
+    expect(result.current).toHaveLength(1)
+    expect(result.current[0]).toMatchObject({ sessionId: sid, estTokens: 40, metered: null, done: false })
+    act(() => { vi.advanceTimersByTime(1000); usageFrame([], [est(sid, { inFlight: false })]); usageFrame([smp('m1', { ts: T0 + 1100 })]); vi.advanceTimersByTime(300) })
+    expect(result.current[0]).toMatchObject({ metered: 550, done: true })
+    const ref = result.current
+    act(() => { vi.advanceTimersByTime(500) })
+    expect(result.current).toBe(ref)
+    act(() => { vi.advanceTimersByTime(METER_HOLD_MS + 500) })
+    expect(result.current).toHaveLength(0)
+  })
+
+  it('sample arriving before the estimate ends still morphs', () => {
+    const { result } = renderHook(() => useInFlightMeters(scope))
+    act(() => { usageFrame([], [est(sid)]); vi.advanceTimersByTime(300) })
+    act(() => { usageFrame([smp('m2', { ts: T0 + 100 })]); vi.advanceTimersByTime(300) })
+    act(() => { usageFrame([], [est(sid, { inFlight: false })]); vi.advanceTimersByTime(300) })
+    expect(result.current[0]).toMatchObject({ metered: 550, done: true })
+  })
+
+  it('no sample within 5 s → dropped; out-of-scope ignored', () => {
+    const { result } = renderHook(() => useInFlightMeters(scope))
+    act(() => { usageFrame([], [est(sid), est('ses-elsewhere', { rootId: 'other-root' })]); vi.advanceTimersByTime(300) })
+    expect(result.current.map((e) => e.sessionId)).toEqual([sid])
+    act(() => { usageFrame([], [est(sid, { inFlight: false })]); vi.advanceTimersByTime(300) })
+    expect(result.current).toHaveLength(1)
+    act(() => { vi.advanceTimersByTime(5200) })
+    expect(result.current).toHaveLength(0)
   })
 })

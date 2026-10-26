@@ -129,26 +129,34 @@ export function compareSamples(a: UsageSample, b: UsageSample): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
-/** Binary insert keeping (ts, id) order; an existing element with the same id is replaced. Returns the index. */
-export function insertSorted(arr: UsageSample[], s: UsageSample): number {
-  let lo = 0
-  let hi = arr.length
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1
-    if (compareSamples(arr[mid]!, s) < 0) lo = mid + 1
-    else hi = mid
-  }
-  // Same id at the same position?
-  if (lo < arr.length && arr[lo]!.id === s.id) {
+/**
+ * Binary insert keeping (ts, id) order; an existing element with the same id is replaced. Returns the index.
+ * `hint.prevTs`: `null` = the id is known to be new (no scan); a number = the id's previous ts (found by
+ * binary search, scanning only the equal-ts run); omitted = fall back to a full scan.
+ */
+export function insertSorted(arr: UsageSample[], s: UsageSample, hint?: { prevTs?: EpochMs | null }): number {
+  let lo = lowerBoundTs(arr, s.ts)
+  while (lo < arr.length && arr[lo]!.ts === s.ts && arr[lo]!.id < s.id) lo++
+  if (lo < arr.length && arr[lo]!.id === s.id && arr[lo]!.ts === s.ts) {
     arr[lo] = s
     return lo
   }
-  // Same id elsewhere (ts changed): remove it first.
-  for (let i = 0; i < arr.length; i++) {
-    if (arr[i]!.id === s.id) {
+  const prevTs = hint?.prevTs
+  if (prevTs !== null) {
+    let i = -1
+    if (prevTs === undefined) {
+      i = arr.findIndex((x) => x.id === s.id)
+    } else {
+      for (let j = lowerBoundTs(arr, prevTs); j < arr.length && arr[j]!.ts === prevTs; j++) {
+        if (arr[j]!.id === s.id) {
+          i = j
+          break
+        }
+      }
+    }
+    if (i >= 0) {
       arr.splice(i, 1)
       if (i < lo) lo -= 1
-      break
     }
   }
   arr.splice(lo, 0, s)
@@ -317,19 +325,23 @@ function finalizeRows(rows: UsageBreakdownRow[], scopeTokens: number): void {
   rows.sort((a, b) => rowTokens(b) - rowTokens(a) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
 }
 
+function newRow(s: UsageSample, kind: UsageBreakdownKind, key: string, labels?: Labels): UsageBreakdownRow {
+  return {
+    key,
+    label: labelFor(s, kind, key, labels),
+    kind,
+    sessionId: kind === 'session' ? key : null,
+    harness: s.harness,
+    totals: emptyTotals(),
+    share: 0,
+  }
+}
+
 function applyToRow(rows: UsageBreakdownRow[], s: UsageSample, kind: UsageBreakdownKind, labels?: Labels): void {
   const key = sampleKeyOf(s, kind)
   let row = rows.find((r) => r.key === key)
   if (!row) {
-    row = {
-      key,
-      label: labelFor(s, kind, key, labels),
-      kind,
-      sessionId: kind === 'session' ? key : null,
-      harness: s.harness,
-      totals: emptyTotals(),
-      share: 0,
-    }
+    row = newRow(s, kind, key, labels)
     rows.push(row)
   } else if (row.harness !== null && row.harness !== s.harness) {
     row.harness = null
@@ -348,15 +360,7 @@ export function breakdown(
     const key = sampleKeyOf(s, kind)
     let row = map.get(key)
     if (!row) {
-      row = {
-        key,
-        label: labelFor(s, kind, key, labels),
-        kind,
-        sessionId: kind === 'session' ? key : null,
-        harness: s.harness,
-        totals: emptyTotals(),
-        share: 0,
-      }
+      row = newRow(s, kind, key, labels)
       map.set(key, row)
       rows.push(row)
     } else if (row.harness !== null && row.harness !== s.harness) {
@@ -406,10 +410,6 @@ function otherLabel(n: number): string {
   return `Other (${n})`
 }
 
-function sankeyKeyOf(s: UsageSample, middle: UsageSankey['middle']): string {
-  return sampleKeyOf(s, middle)
-}
-
 interface Group {
   tokens: number
   flows: Record<FlowKind, number>
@@ -443,7 +443,7 @@ export function buildSankey(
   const max = opts?.maxMiddle ?? LIMITS.usageSankeyMaxMiddle
   const groups = new Map<string, Group>()
   for (const s of samples) {
-    const key = sankeyKeyOf(s, middle)
+    const key = sampleKeyOf(s, middle)
     let g = groups.get(key)
     if (!g) groups.set(key, (g = newGroup()))
     addToGroup(g, s)
@@ -530,7 +530,7 @@ function sourceSinkNode(
  */
 export function addToSankey(sankey: UsageSankey, s: UsageSample, opts?: SankeyOpts): void {
   const max = opts?.maxMiddle ?? LIMITS.usageSankeyMaxMiddle
-  const key = sankeyKeyOf(s, sankey.middle)
+  const key = sampleKeyOf(s, sankey.middle)
   const nodeById = new Map(sankey.nodes.map((n) => [n.id, n]))
   const named = sankey.nodes.filter((n) => n.kind === 'middle' && n.id !== 'mid:other').length
   const hasOther = nodeById.has('mid:other')

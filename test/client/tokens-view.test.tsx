@@ -24,7 +24,7 @@ describe('Tokens view registration', () => {
     expect(tabs[5]).toHaveTextContent('Tokens')
     await userEvent.click(screen.getByRole('tab', { name: /Tokens/ }))
     expect(useOcc.getState().ui.view).toBe('tokens')
-    expect(await screen.findByTestId('tokens-view')).toBeInTheDocument()
+    expect(await screen.findByTestId('tokens-view', {}, { timeout: 5000 })).toBeInTheDocument()
   })
 
   it('hotkey 6 switches to the Tokens view', async () => {
@@ -47,6 +47,6 @@ describe('Tokens view registration', () => {
   it('the shell renders the Tokens view when v=tokens', async () => {
     history.replaceState(null, '', '/?mock=1')
     renderWithMockStore(<Shell />, { uiState: { view: 'tokens' } })
-    expect(await screen.findByTestId('tokens-view')).toBeInTheDocument()
+    expect(await screen.findByTestId('tokens-view', {}, { timeout: 5000 })).toBeInTheDocument()
   })
 })

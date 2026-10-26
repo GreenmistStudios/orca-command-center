@@ -279,8 +279,13 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     'GET /api/usage': (o) => {
       const p = o.params ?? {}
       const scope = usageScope(p.scope, p.id)
-      const hours = p.windowHours != null && p.windowHours !== '' ? Number(p.windowHours) : undefined
-      if (hours != null && !(hours >= 1 && hours <= 720)) throw new ApiRequestError(400, 'bad_request', 'windowHours must be 1–720')
+      const has = (v: unknown) => v != null && v !== ''
+      if (has(p.windowHours) && has(p.windowMinutes)) throw new ApiRequestError(400, 'bad_request', 'Specify only one of windowHours and windowMinutes')
+      const hrs = has(p.windowHours) ? Number(p.windowHours) : undefined
+      if (hrs != null && !(Number.isInteger(hrs) && hrs >= 1 && hrs <= 720)) throw new ApiRequestError(400, 'bad_request', 'windowHours must be an integer 1–720')
+      const mins = has(p.windowMinutes) ? Number(p.windowMinutes) : undefined
+      if (mins != null && !(Number.isInteger(mins) && mins >= 1 && mins <= 43_200)) throw new ApiRequestError(400, 'bad_request', 'windowMinutes must be an integer 1–43200')
+      const hours = mins != null ? mins / 60 : hrs
       if (p.bucketMs != null && !(Number(p.bucketMs) >= 1000)) throw new ApiRequestError(400, 'bad_request', 'bucketMs must be ≥ 1000')
       const middle = p.middle as 'agent' | 'session' | 'model' | undefined
       if (middle && !['agent', 'session', 'model'].includes(middle)) throw new ApiRequestError(400, 'bad_request', 'invalid middle')

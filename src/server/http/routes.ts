@@ -37,6 +37,9 @@ function int(name: string, raw: string | null, min: number, max: number): number
 
 function windowMs(q: Query): number | undefined {
   const h = int('windowHours', q.get('windowHours'), 1, 720)
+  const m = int('windowMinutes', q.get('windowMinutes'), 1, 43_200)
+  if (h !== undefined && m !== undefined) throw new BadRequest('Specify only one of windowHours and windowMinutes')
+  if (m !== undefined) return m * 60_000
   return h === undefined ? undefined : h * 3_600_000
 }
 
@@ -132,7 +135,7 @@ export const ROUTES: readonly RouteDef[] = [
   {
     key: 'GET /api/usage',
     path: '/api/usage',
-    query: ['scope', 'id', 'windowHours', 'bucketMs', 'middle'],
+    query: ['scope', 'id', 'windowHours', 'windowMinutes', 'bucketMs', 'middle'],
     handle: (s, _p, q) => {
       const { scope, id } = usageScope(q)
       const query = {

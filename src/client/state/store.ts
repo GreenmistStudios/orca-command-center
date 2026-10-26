@@ -79,6 +79,13 @@ export const DOCK_MAX = 640
 /** Ring cap for live usage samples. */
 export const USAGE_RING_MAX = 50_000
 
+const billableSig = (x: UsageSample): string => JSON.stringify([x.tokens, x.cost, x.aiu, x.ts, x.agent, x.model, x.sessionId])
+
+/**
+ * NOTE: `samples.byId` and `samples.order` are MUTATED IN PLACE (a 50k ring cannot be copied per frame);
+ * only `samples.version` changes identity-wise. Consumers must select `usage.samples.version` as the
+ * change signal and never rely on `byId`/`order` identity.
+ */
 export interface UsageSlice {
   samples: { byId: Record<string, UsageSample>; /** compareSamples order */ order: string[]; version: number }
   /** In-flight estimates keyed by sessionId. */
@@ -534,12 +541,14 @@ export const useOcc = create<OccState>()(
           case 'meta': set({ seq: e.seq, lastEventAt: Date.now(), meta: e.meta }); return
           case 'usage': {
             const accepted: UsageSample[] = []
+            const changedEst: UsageEstimate[] = []
             set((s) => {
               const byId = s.usage.samples.byId
               const order = s.usage.samples.order
               for (const x of e.samples) {
                 const prev = byId[x.id]
                 if (prev && prev.ledgerSeq > x.ledgerSeq) continue
+                if (prev && prev.ledgerSeq === x.ledgerSeq && billableSig(prev) === billableSig(x)) continue
                 accepted.push(x)
                 if (prev) {
                   byId[x.id] = x
@@ -553,8 +562,12 @@ export const useOcc = create<OccState>()(
               if (e.estimates.length) {
                 estimates = { ...estimates }
                 for (const est of e.estimates) {
-                  if (est.inFlight) estimates[est.sessionId] = est
-                  else delete estimates[est.sessionId]
+                  const cur = estimates[est.sessionId]
+                  if (est.inFlight) {
+                    if (cur && cur.inFlight && cur.estOutputTokens === est.estOutputTokens && cur.startedAt === est.startedAt) continue
+                    estimates[est.sessionId] = est
+                    changedEst.push(est)
+                  } else if (cur) { delete estimates[est.sessionId]; changedEst.push(est) }
                 }
               }
               return {
@@ -563,7 +576,7 @@ export const useOcc = create<OccState>()(
               }
             })
             // After the state update, so listeners reading the store see the new data.
-            usageBus.emit({ samples: accepted, estimates: e.estimates })
+            if (accepted.length || changedEst.length) usageBus.emit({ samples: accepted, estimates: changedEst })
             return
           }
           case 'orchestration':
@@ -668,7 +681,7 @@ export const useOcc = create<OccState>()(
         const key = usageReportKey(scope, windowMs, middle)
         return load('usageReports', key, () => api.get('GET /api/usage', {
           params: {
-            scope: scope.kind, id: scope.id ?? undefined, windowHours: windowMs != null ? windowMs / 3_600_000 : undefined,
+            scope: scope.kind, id: scope.id ?? undefined, windowMinutes: windowMs != null ? Math.round(windowMs / 60_000) : undefined,
             bucketMs: o?.bucketMs, middle,
           },
         }), { force: o?.force, dedupeKey: o?.bucketMs ? `:${o.bucketMs}` : undefined })

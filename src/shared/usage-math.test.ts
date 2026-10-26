@@ -78,6 +78,19 @@ describe('totals', () => {
 })
 
 describe('sorted samples', () => {
+  it('insertSorted hints: prevTs relocates, null skips scan, 20k inserts are fast', () => {
+    const arr: UsageSample[] = []
+    insertSorted(arr, mk({ id: 'a', ts: 10 }), { prevTs: null })
+    insertSorted(arr, mk({ id: 'b', ts: 10 }), { prevTs: null })
+    insertSorted(arr, mk({ id: 'a', ts: 20 }), { prevTs: 10 })
+    expect(arr.map((s) => `${s.id}${s.ts}`)).toEqual(['b10', 'a20'])
+    const big: UsageSample[] = []
+    const t0 = performance.now()
+    for (let i = 0; i < 20_000; i++) insertSorted(big, mk({ id: `x${i}`, ts: i }), { prevTs: null })
+    expect(performance.now() - t0).toBeLessThan(100)
+    expect(big).toHaveLength(20_000)
+  })
+
   it('insertSorted keeps order and replaces by id', () => {
     const arr: UsageSample[] = []
     insertSorted(arr, mk({ id: 'b', ts: 20 }))

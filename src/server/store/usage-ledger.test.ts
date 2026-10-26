@@ -51,6 +51,18 @@ describe('UsageLedger', () => {
     expect(l.totalsOf('s').cost).toBe(9)
   })
 
+  it('non-billable drift updates in place, keeps seq, is not published', () => {
+    const l = make()
+    l.ingest([sample('a', 's', 10)])
+    const acc = l.ingest([sample('a', 's', 12, { ttftMs: 5, durationMs: 9, startTs: 3, agent: 'plan' })])
+    expect(acc).toEqual([])
+    expect(l.ledgerSeq).toBe(1)
+    const [s] = l.samplesOf('s')
+    expect(s).toMatchObject({ ts: 12, ttftMs: 5, agent: 'plan', ledgerSeq: 1 })
+    expect(l.samplesOf('s')).toHaveLength(1)
+    expect(l.ingest([sample('a', 's', 12, { ttftMs: 5, durationMs: 9, startTs: 3, agent: 'plan', aiu: 2 })])[0]!.ledgerSeq).toBe(2)
+  })
+
   it('re-resolves roots when parents are discovered later', () => {
     parents.clear()
     const l = make()

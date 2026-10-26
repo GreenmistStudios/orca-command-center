@@ -117,11 +117,8 @@ export class SessionModel {
   private readonly callStarts = new Map<string, number>()
   private inFlightSince: number | null = null
   private usageOut: { samples: UsageSample[]; estimates: UsageEstimate[] } = { samples: [], estimates: [] }
-  /** Multiple-shutdown rule (resumed sessions). Real data on this machine has one multi-shutdown
-   *  session and its metrics are all zero, so it cannot discriminate; Copilot's shutdown reports the
-   *  process run, so the default is 'per-run' (additive). 'cumulative' subtracts what earlier
-   *  shutdowns already reported. */
-  shutdownMode: 'per-run' | 'cumulative' = 'per-run'
+  /** Test-only override of the runtime cumulative-vs-per-run detection (see shutdownSummary). */
+  _shutdownModeOverride: 'per-run' | 'cumulative' | null = null
   private periodStart: number | null = null
   private periodCalls = new Map<string, { t: TokenUsage; aiu: number }>()
   private prevTotals = new Map<string, { t: TokenUsage; aiu: number }>()
@@ -222,7 +219,7 @@ export class SessionModel {
       this.periodCalls.set(modelId, acc)
     }
     this.usageOut.samples.push(sample)
-    this.estimate(false, this.inFlightSince ?? sample.startTs ?? ts, ts)
+    if (this.inFlightSince !== null) this.estimate(false, this.inFlightSince, ts)
     this.inFlightSince = null
   }
 
@@ -234,25 +231,44 @@ export class SessionModel {
     this.shutdowns++
     const mm = isObj(d.modelMetrics) ? d.modelMetrics : null
     const nextPrev = new Map(this.prevTotals)
+    const totalOf = (raw: Obj): TokenUsage => {
+      const u = isObj(raw.usage) ? raw.usage : {}
+      const td = isObj(raw.tokenDetails) ? raw.tokenDetails : {}
+      const cacheRead = Math.max(0, num(u.cacheReadTokens) ?? 0)
+      const cacheWrite = Math.max(0, num(u.cacheWriteTokens) ?? 0)
+      const reasoning = Math.max(0, num(u.reasoningTokens) ?? 0)
+      const fresh = isObj(td.input) ? num(td.input.tokenCount) : null
+      return {
+        input: fresh !== null ? Math.max(0, fresh) : Math.max(0, (num(u.inputTokens) ?? 0) - cacheRead - cacheWrite),
+        output: Math.max(0, (num(u.outputTokens) ?? 0) - reasoning),
+        reasoning,
+        cacheRead,
+        cacheWrite,
+      }
+    }
+    // Runtime detection: from the 2nd shutdown, if every model present in both shutdowns has totals >= the
+    // previous ones (and at least one overlaps) the report is cumulative; otherwise it is per-run.
+    let cumulative = this._shutdownModeOverride === 'cumulative'
+    if (this._shutdownModeOverride === null && this.shutdowns > 1 && mm) {
+      let overlap = 0
+      let ok = true
+      for (const [modelId, raw] of Object.entries(mm)) {
+        const prev = this.prevTotals.get(modelId)
+        if (!isObj(raw) || !prev) continue
+        overlap++
+        const t = totalOf(raw)
+        const aiu = Math.max(0, num(raw.totalNanoAiu) ?? 0) / 1e9
+        if (t.input < prev.t.input || t.output < prev.t.output || t.reasoning < prev.t.reasoning || t.cacheRead < prev.t.cacheRead || t.cacheWrite < prev.t.cacheWrite || aiu < prev.aiu) ok = false
+      }
+      cumulative = ok && overlap > 0
+    }
     if (mm) {
       for (const [modelId, raw] of Object.entries(mm)) {
         if (!isObj(raw)) continue
-        const u = isObj(raw.usage) ? raw.usage : {}
-        const td = isObj(raw.tokenDetails) ? raw.tokenDetails : {}
-        const cacheRead = Math.max(0, num(u.cacheReadTokens) ?? 0)
-        const cacheWrite = Math.max(0, num(u.cacheWriteTokens) ?? 0)
-        const reasoning = Math.max(0, num(u.reasoningTokens) ?? 0)
-        const fresh = isObj(td.input) ? num(td.input.tokenCount) : null
-        const total: TokenUsage = {
-          input: fresh !== null ? Math.max(0, fresh) : Math.max(0, (num(u.inputTokens) ?? 0) - cacheRead - cacheWrite),
-          output: Math.max(0, (num(u.outputTokens) ?? 0) - reasoning),
-          reasoning,
-          cacheRead,
-          cacheWrite,
-        }
+        const total = totalOf(raw)
         const aiu = Math.max(0, num(raw.totalNanoAiu) ?? 0) / 1e9
         nextPrev.set(modelId, { t: { ...total }, aiu })
-        const prev = this.shutdownMode === 'cumulative' ? this.prevTotals.get(modelId) : undefined
+        const prev = cumulative ? this.prevTotals.get(modelId) : undefined
         const calls = this.periodCalls.get(modelId)
         const t: TokenUsage = {
           input: Math.max(0, total.input - (prev?.t.input ?? 0) - (calls?.t.input ?? 0)),

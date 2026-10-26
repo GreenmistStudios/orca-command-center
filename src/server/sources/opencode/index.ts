@@ -95,6 +95,7 @@ const MSG_CACHE = 5000
 const DERIVED_CAP = 4000
 const SEEN_CAP = 5000
 const EST_THROTTLE_MS = 500
+const EST_KEEPALIVE_MS = 10_000
 
 /** Streaming estimate: generated tokens ≈ streamed chars / 4 (shared definition). */
 const estTokens = (chars: number): number => estimateTokensFromChars(chars)
@@ -111,6 +112,7 @@ interface InFlight {
   updatedAt: number
   lastEmitAt: number
   emitted: boolean
+  lastSig?: string
 }
 
 interface SessionRow {
@@ -798,6 +800,13 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
     agent: string | null
   }
 
+  function stepFirstOutput(outs: number[] | undefined, startTs: number | null, ts: number): number | null {
+    if (!outs || startTs == null) return null
+    let best: number | null = null
+    for (const t of outs) if (t >= startTs && t <= ts && (best == null || t < best)) best = t
+    return best
+  }
+
   function buildSample(p: SampleParts): UsageSample {
     const durationMs = p.startTs != null && p.ts >= p.startTs ? p.ts - p.startTs : null
     let ttftMs: number | null = null
@@ -907,8 +916,10 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
     for (const sid of touched) {
       const c = calls.get(sid)
       if (!c) continue
-      if (!c.emitted || t - c.lastEmitAt >= EST_THROTTLE_MS) {
+      const changed = !c.emitted || c.lastSig !== `${c.est}|${c.startedAt}`
+      if (!c.emitted || (changed && t - c.lastEmitAt >= EST_THROTTLE_MS) || t - c.lastEmitAt >= EST_KEEPALIVE_MS) {
         c.emitted = true
+        c.lastSig = `${c.est}|${c.startedAt}`
         c.lastEmitAt = t
         out.set(sid, estimateOf(sid, c, true))
       }
@@ -930,15 +941,23 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
         )?.tc,
       ) ?? null
     if (startTs == null && live?.explicit) startTs = live.startedAt
-    let firstOutputTs = live?.firstOutputAt ?? null
-    if (firstOutputTs == null && startTs != null) {
-      firstOutputTs = numOr(
-        q().get<{ t: number | null }>(
-          `SELECT min(json_extract(data, '$.time.start')) AS t FROM part WHERE message_id = ?
-             AND json_extract(data, '$.type') IN ('text', 'reasoning')`,
-          mid,
-        )?.t,
-      )
+    // per-step first output: first text/reasoning start within [step start, finish]; identical rule to getUsageSamples
+    let firstOutputTs: number | null = null
+    if (startTs != null) {
+      const lf = live?.firstOutputAt ?? null
+      if (lf != null && lf >= startTs && lf <= ts) firstOutputTs = lf
+      else {
+        firstOutputTs = numOr(
+          q().get<{ t: number | null }>(
+            `SELECT min(json_extract(data, '$.time.start')) AS t FROM part WHERE message_id = ?
+               AND json_extract(data, '$.type') IN ('text', 'reasoning')
+               AND json_extract(data, '$.time.start') >= ? AND json_extract(data, '$.time.start') <= ?`,
+            mid,
+            startTs,
+            ts,
+          )?.t,
+        )
+      }
     }
     const info = msgOf(mid, batch.msgs)
     const row = rowOf(sid)
@@ -994,7 +1013,7 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
         }
       }
       if (startedAt == null) continue
-      const c: InFlight = { messageId: mid, startedAt, explicit: true, est, firstOutputAt, updatedAt: Math.max(updatedAt, startedAt), lastEmitAt: t, emitted: true }
+      const c: InFlight = { messageId: mid, startedAt, explicit: true, est, firstOutputAt, updatedAt: Math.max(updatedAt, startedAt), lastEmitAt: t, emitted: true, lastSig: `${est}|${startedAt}` }
       calls.set(sid, c)
       out.push(estimateOf(sid, c, true))
     }
@@ -1007,35 +1026,38 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
       const row = rowOf(sid)
       if (!row) continue
       const since = options.sinceMs
-      const fin = q().all<{ id: string; message_id: string; tc: number; ti: unknown; to: unknown; tr: unknown; cr: unknown; cw: unknown; cost: unknown; reason: unknown }>(
-        `SELECT id, message_id, time_created AS tc, json_extract(data, '$.tokens.input') AS ti,
+      // one ordered pass over the session's relevant parts; only projected fields are read
+      interface UsageRow { id: string; message_id: string; tc: number; t: string; ts: unknown; ti: unknown; to: unknown; tr: unknown; cr: unknown; cw: unknown; cost: unknown; reason: unknown }
+      const fin: UsageRow[] = []
+      const starts = new Map<string, Array<{ id: string; tc: number }>>()
+      const outs = new Map<string, number[]>()
+      for (const r of q().all<UsageRow>(
+        `SELECT id, message_id, time_created AS tc, json_extract(data, '$.type') AS t,
+                json_extract(data, '$.time.start') AS ts, json_extract(data, '$.tokens.input') AS ti,
                 json_extract(data, '$.tokens.output') AS "to", json_extract(data, '$.tokens.reasoning') AS tr,
                 json_extract(data, '$.tokens.cache.read') AS cr, json_extract(data, '$.tokens.cache.write') AS cw,
                 json_extract(data, '$.cost') AS cost, json_extract(data, '$.reason') AS reason
-           FROM part WHERE session_id = ? AND json_extract(data, '$.type') = 'step-finish'${since != null ? ' AND time_created >= ?' : ''}
+           FROM part WHERE session_id = ? AND json_extract(data, '$.type') IN ('step-start', 'step-finish', 'text', 'reasoning')
            ORDER BY time_created, id`,
-        ...(since != null ? [sid, since] : [sid]),
-      )
+        sid,
+      )) {
+        if (r.t === 'step-finish') {
+          if (since == null || Number(r.tc) >= since) fin.push(r)
+        } else if (r.t === 'step-start') {
+          const l = starts.get(r.message_id)
+          if (l) l.push({ id: r.id, tc: Number(r.tc) })
+          else starts.set(r.message_id, [{ id: r.id, tc: Number(r.tc) }])
+        } else {
+          const t = numOr(r.ts)
+          if (t != null) {
+            const l = outs.get(r.message_id)
+            if (l) l.push(t)
+            else outs.set(r.message_id, [t])
+          }
+        }
+      }
       if (!fin.length) continue
-      const starts = new Map<string, number[]>()
-      for (const r of q().all<{ message_id: string; tc: number }>(
-        `SELECT message_id, time_created AS tc FROM part WHERE session_id = ? AND json_extract(data, '$.type') = 'step-start'
-           ORDER BY time_created, id`,
-        sid,
-      )) {
-        const l = starts.get(r.message_id)
-        if (l) l.push(Number(r.tc))
-        else starts.set(r.message_id, [Number(r.tc)])
-      }
-      const firstOut = new Map<string, number>()
-      for (const r of q().all<{ message_id: string; t: number | null }>(
-        `SELECT message_id, min(json_extract(data, '$.time.start')) AS t FROM part WHERE session_id = ?
-           AND json_extract(data, '$.type') IN ('text', 'reasoning') GROUP BY message_id`,
-        sid,
-      )) {
-        const t = numOr(r.t)
-        if (t != null) firstOut.set(r.message_id, t)
-      }
+      fin.sort((a, b) => Number(a.tc) - Number(b.tc) || (a.id < b.id ? -1 : 1))
       const msgs = new Map<string, { model: ModelRef | null; agent: string | null }>()
       for (const r of q().all<{ id: string; m: string | null; p: string | null; a: string | null; mode: string | null }>(
         `SELECT id, json_extract(data, '$.modelID') AS m, json_extract(data, '$.providerID') AS p,
@@ -1046,18 +1068,26 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
         msgs.set(r.id, { model: typeof r.m === 'string' ? { providerId: typeof r.p === 'string' ? r.p : null, modelId: r.m } : null, agent: r.a ?? r.mode ?? null })
       }
       const sessionModel = parseModel(row.model)
-      const used = new Map<string, number>()
       for (const f of fin) {
-        const k = used.get(f.message_id) ?? 0
-        used.set(f.message_id, k + 1)
         const m = msgs.get(f.message_id)
+        const ts = Number(f.tc)
+        let startTs: number | null = null
+        const sl = starts.get(f.message_id)
+        if (sl) {
+          let bestId = ''
+          for (const x of sl) if (x.tc <= ts && x.id > bestId) {
+            bestId = x.id
+            startTs = x.tc
+          }
+        }
+        const firstOutputTs = stepFirstOutput(outs.get(f.message_id), startTs, ts)
         out.push(
           buildSample({
             partId: f.id,
             sessionId: sid,
-            ts: Number(f.tc),
-            startTs: starts.get(f.message_id)?.[k] ?? null,
-            firstOutputTs: firstOut.get(f.message_id) ?? null,
+            ts,
+            startTs,
+            firstOutputTs,
             tokens: {
               input: numOr(f.ti) ?? 0,
               output: numOr(f.to) ?? 0,
@@ -1451,9 +1481,17 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
     const max = maxRowid()
     const batch = newBatch()
     for (const r of q().all<EventRow>(
-      'SELECT rowid, aggregate_id, type, data FROM event WHERE rowid > ? ORDER BY rowid LIMIT 3000',
+      // message.updated rows can carry hundreds of KB (summaries/diffs) and we only need the role here:
+      // read a prefix and pull id/role out of it instead of loading + parsing the whole blob.
+      `SELECT rowid, aggregate_id, type, CASE WHEN type = 'message.updated.1' THEN substr(data, 1, 700) ELSE data END AS data FROM event WHERE rowid > ? ORDER BY rowid LIMIT 3000`,
       Math.max(0, max - 3000),
     )) {
+      if (r.type === 'message.updated.1') {
+        const id = /"info":\{"id":"([^"]+)"/.exec(r.data)?.[1]
+        const role = /"role":"([^"]+)"/.exec(r.data)?.[1]
+        if (id && role) batch.msgs.set(id, { id, sessionID: r.aggregate_id, role })
+        continue
+      }
       absorb(batch, r)
     }
     const out: ActivityEvent[] = []

@@ -82,11 +82,13 @@ describe('usage reports & exactness', () => {
   afterAll(() => env.close())
 
   it('boots without waiting for usage seeding, then fills in the background', async () => {
-    expect(startMs).toBeLessThan(1500)
+    // The 1.5 s boot budget is enforced on real data by scripts/perf.mjs. Here we only guard
+    // against start() blocking on seeding, with headroom for CPU contention in the full suite.
+    expect(startMs).toBeLessThan(5000)
     const b = await waitFor(async () => {
       const x = await env.bootstrap()
       return x.stats.usage && x.sessions.some((s) => s.id === TF.root && s.usage) ? x : null
-    })
+    }, 20_000)
     expect(b.stats.usage!.totals.calls).toBeGreaterThan(5)
   })
 

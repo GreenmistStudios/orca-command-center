@@ -23,6 +23,13 @@ export interface LedgerStats {
   evictedSamples: number
 }
 
+function sameBillable(a: UsageSample, b: UsageSample): boolean {
+  if (a.cost !== b.cost || a.aiu !== b.aiu) return false
+  const x = a.tokens
+  const y = b.tokens
+  return x.input === y.input && x.output === y.output && x.reasoning === y.reasoning && x.cacheRead === y.cacheRead && x.cacheWrite === y.cacheWrite
+}
+
 function sameSample(a: UsageSample, b: UsageSample): boolean {
   if (a.ts !== b.ts || a.sessionId !== b.sessionId || a.startTs !== b.startTs || a.cost !== b.cost || a.aiu !== b.aiu) return false
   if (a.agent !== b.agent || a.finish !== b.finish || a.source !== b.source || a.harness !== b.harness) return false
@@ -69,11 +76,19 @@ export class UsageLedger {
     for (const s of samples) {
       const prev = this.byId.get(s.id)
       if (prev && sameSample(prev, s)) continue
+      if (prev && prev.sessionId === s.sessionId && sameBillable(prev, s)) {
+        // Non-billable drift (timing/labels): update in place, keep ledgerSeq, do not publish.
+        const kept: UsageSample = { ...s, ledgerSeq: prev.ledgerSeq, rootId: prev.rootId }
+        insertSorted(this.bySession.get(s.sessionId)!, kept, { prevTs: prev.ts })
+        this.byId.set(s.id, kept)
+        this.bump(s.sessionId)
+        continue
+      }
       if (prev && prev.sessionId !== s.sessionId) this.removeFromSession(prev)
       const stored: UsageSample = { ...s, ledgerSeq: ++this.seq, rootId: this.opts.rootOf(s.sessionId) ?? s.sessionId }
       let arr = this.bySession.get(s.sessionId)
       if (!arr) this.bySession.set(s.sessionId, (arr = []))
-      insertSorted(arr, stored)
+      insertSorted(arr, stored, { prevTs: prev && prev.sessionId === s.sessionId ? prev.ts : null })
       this.byId.set(s.id, stored)
       this.bump(s.sessionId)
       accepted.push(stored)

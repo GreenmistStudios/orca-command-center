@@ -25,6 +25,7 @@ import type {
   SessionDetail,
   SessionEdge,
   SessionSummary,
+  SessionUsage,
   SessionTree,
   SourceHealth,
   TerminalInfo,
@@ -65,6 +66,7 @@ const MAX_TREE_NODES = 500
 const MAX_BOOTSTRAP_BYTES = 2 * 1024 * 1024
 const MAX_EXTRAS = 400
 const TESTED_ORCH_SCHEMA = 43
+const SEED_GATE_MS = 1500
 
 const isHookOrOrchEvent = (e: ActivityEvent): boolean => e.source === 'orca.hooks' || e.kind === 'orchestration'
 
@@ -427,6 +429,31 @@ export const createStore: CreateStore = (deps): Store => {
   }
 
   const sameJson = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b)
+  function usageEqual(a: SessionUsage, b: SessionUsage, withRates: boolean): boolean {
+    if (a.calls !== b.calls || a.inflow !== b.inflow || a.outflow !== b.outflow || a.aiu !== b.aiu || a.cacheHitRate !== b.cacheHitRate) return false
+    if (!sameJson(a.tree, b.tree)) return false
+    const ea = a.inFlight
+    const eb = b.inFlight
+    if (ea !== eb) {
+      if (!ea || !eb) return false
+      const x = ea as unknown as Record<string, unknown>
+      const y = eb as unknown as Record<string, unknown>
+      for (const k of new Set([...Object.keys(x), ...Object.keys(y)])) {
+        if (k === 'asOf' || (k === 'updatedAt' && !withRates)) continue
+        if (!sameJson(x[k], y[k])) return false
+      }
+    }
+    if (withRates) {
+      const ra = a.rates
+      const rb = b.rates
+      if (ra !== rb) {
+        if (!ra || !rb) return false
+        if (ra.windowMs !== rb.windowMs || ra.inflowPerMin !== rb.inflowPerMin || ra.outflowPerMin !== rb.outflowPerMin || ra.costPerHour !== rb.costPerHour || ra.callsPerMin !== rb.callsPerMin) return false
+      }
+    }
+    return true
+  }
+
   /** Cheap field-wise comparison: primitives/identity first, JSON only for differing object refs. */
   function summaryEqual(a: SessionSummary, b: SessionSummary, withRates = false): boolean {
     const x = a as unknown as Record<string, unknown>
@@ -438,9 +465,7 @@ export const createStore: CreateStore = (deps): Store => {
       if (typeof u !== 'object' || typeof v !== 'object' || !u || !v) return false
       if (k === 'usage') {
         // rates decay continuously and estimates re-stamp on every poll: only the clock tick compares them
-        const skip = withRates ? ['asOf'] : ['asOf', 'rates', 'updatedAt']
-        const norm = (o: unknown) => JSON.stringify(o, (key, val) => (skip.includes(key) ? undefined : val))
-        if (norm(u) !== norm(v)) return false
+        if (!usageEqual(u as SessionUsage, v as SessionUsage, withRates)) return false
       } else if (k === 'childIds') {
         const ua = u as string[]
         const va = v as string[]
@@ -1264,7 +1289,20 @@ export const createStore: CreateStore = (deps): Store => {
     if (sources.hooks) unsubs.push(sources.hooks.subscribe(onHooks))
     if (sources.orch) unsubs.push(sources.orch.subscribe(onOrchestration))
 
-    const results = await Promise.allSettled(sources.all.map((s) => s.start()))
+    // Seeding waits for the first Orca CLI poll to settle, or SEED_GATE_MS, whichever is first.
+    const gateMs = (deps as { seedGateMs?: number }).seedGateMs ?? SEED_GATE_MS
+    let gateTimer: NodeJS.Timeout | null = null
+    const startPromises = sources.all.map((s) => s.start())
+    const cliIdx = sources.cli ? sources.all.indexOf(sources.cli) : -1
+    const seedGate = Promise.race([
+      cliIdx >= 0 ? startPromises[cliIdx]!.then(() => undefined, () => undefined) : new Promise<void>(() => undefined),
+      new Promise<void>((res) => {
+        gateTimer = setTimeout(res, gateMs)
+        gateTimer.unref?.()
+        timers.add(gateTimer)
+      }),
+    ])
+    const results = await Promise.allSettled(startPromises)
     results.forEach((r, i) => {
       if (r.status === 'rejected') log.warn('store: source %s failed to start: %s', sources.all[i]!.id, r.reason instanceof Error ? r.reason.message : String(r.reason))
     })
@@ -1295,7 +1333,12 @@ export const createStore: CreateStore = (deps): Store => {
     orchGate.changed(orchestrationSummary())
     healthGate.changed(healthDigest())
     pub.ready = true
-    {
+    const beginSeeding = () => {
+      if (stopped) return
+      if (gateTimer) {
+        clearTimeout(gateTimer)
+        timers.delete(gateTimer)
+      }
       const wins = [...sessions.values()].filter((hs) => hs.updatedAt >= now() - config.windowMs).sort((a, b) => b.updatedAt - a.updatedAt)
       const isLiveId = (id: string) => summaries.get(id)?.live === true
       usage.startSeeding(
@@ -1303,6 +1346,7 @@ export const createStore: CreateStore = (deps): Store => {
         wins.filter((hs) => !isLiveId(hs.id)).map((hs) => hs.id),
       )
     }
+    void seedGate.then(beginSeeding)
     const every = (ms: number, fn: () => void) => {
       const t = setInterval(fn, ms)
       t.unref?.()

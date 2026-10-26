@@ -349,6 +349,13 @@ describe('transcript, activity, parts, diffs, file changes', () => {
     expect(multi.every((e) => e.rootId === FLEET.root)).toBe(true)
   })
 
+  it('recentActivity does no per-step usage lookups and still resolves roles', () => {
+    sql = []
+    const r = src.recentActivity({ sinceMs: 0, limit: 1000 })
+    expect(r.length).toBeGreaterThan(0)
+    expect(sql.filter((x) => /step-start|time\.start|step-finish/.test(x.sql))).toEqual([])
+  })
+
   it('recentActivity comes from the event log, oldest → newest, without steps', () => {
     const r = src.recentActivity({ sinceMs: NOW - 120_000, limit: 100 })
     const streams = r.filter((e) => e.id === `opencode:${P.streamText}`)
@@ -755,6 +762,27 @@ describe('live usage from the event tail', () => {
     fx.appendPartEvent('prt_l3_finish', NOW + 2100)
     step(NOW + 2100)
     expect(usageSamples()).toHaveLength(1)
+  })
+
+  it('multi-step message: live samples deep-equal the re-read samples', () => {
+    const { sid, mid } = usageSession('ses_multi')
+    const at = NOW + 100
+    clock = at
+    addStartEv(sid, mid, 'prt_m1_start', at)
+    addTextPart(sid, mid, 'prt_m2_text', at + 200, 'hello')
+    fx.appendPartEvent('prt_m2_text', at + 200)
+    fx.addStepFinish({ id: 'prt_m3_fin', messageId: mid, sessionId: sid, created: at + 1000, tokens: { input: 1, output: 5 }, reason: 'tool-calls' })
+    fx.appendPartEvent('prt_m3_fin', at + 1000)
+    step(at + 1000)
+    addStartEv(sid, mid, 'prt_m4_start', at + 1500)
+    addTextPart(sid, mid, 'prt_m5_text', at + 1900, 'world')
+    fx.appendPartEvent('prt_m5_text', at + 1900)
+    fx.addStepFinish({ id: 'prt_m6_fin', messageId: mid, sessionId: sid, created: at + 3000, tokens: { input: 2, output: 7 }, reason: 'stop' })
+    fx.appendPartEvent('prt_m6_fin', at + 3000)
+    step(at + 3000)
+    const live = usageSamples().filter((s) => s.sessionId === sid)
+    expect(live.map((s) => s.ttftMs)).toEqual([200, 400])
+    expect(src.getUsageSamples!([sid])).toEqual(live)
   })
 
   it('handles start + growth + finish coalesced into one batch in any order', () => {

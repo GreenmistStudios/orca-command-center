@@ -22,9 +22,9 @@ const metric = (input: number, cr: number, cw: number, out: number, reasoning: n
   ...(withDetails ? { tokenDetails: { input: { tokenCount: input } } } : {}),
 })
 
-function build(mode: 'per-run' | 'cumulative', fx: ReturnType<typeof createCopilotFixture>, events: ReturnType<typeof fx.event>[]) {
+function build(mode: 'per-run' | 'cumulative' | 'auto', fx: ReturnType<typeof createCopilotFixture>, events: ReturnType<typeof fx.event>[]) {
   const m = new SessionModel('s1', createToolClassifier({ knownServers: [] }))
-  m.shutdownMode = mode
+  if (mode !== 'auto') m._shutdownModeOverride = mode
   for (const e of events) m.ingest(JSON.stringify(e))
   return m
 }
@@ -90,10 +90,10 @@ describe('session-summary usage', () => {
       ]
     }
     const fx = createCopilotFixture(tmp)
-    const per = build('per-run', fx, mk())
+    const per = build('auto', fx, mk())
     expect(sum(per).t).toEqual({ input: 160, output: 80, reasoning: 0, cacheRead: 0, cacheWrite: 0 })
     expect(sum(per).aiu).toBeCloseTo(6, 6)
-    const cum = build('cumulative', fx, mk().map((e) => e).map((e, i) => (i === 5 ? { ...e, data: { ...e.data, modelMetrics: { [M]: metric(160, 0, 0, 80, 0, 6) } } } : e)))
+    const cum = build('auto', fx, mk().map((e) => e).map((e, i) => (i === 5 ? { ...e, data: { ...e.data, modelMetrics: { [M]: metric(160, 0, 0, 80, 0, 6) } } } : e)))
     expect(sum(cum).t).toEqual({ input: 160, output: 80, reasoning: 0, cacheRead: 0, cacheWrite: 0 })
     expect(sum(cum).aiu).toBeCloseTo(6, 6)
     const ids = [...per.samples.keys()].filter((k) => k.includes(':summary:'))
@@ -101,6 +101,28 @@ describe('session-summary usage', () => {
     const second = per.samples.get(ids[1]!)!
     const first = per.samples.get(ids[0]!)!
     expect(second.startTs).toBe(first.ts)
+  })
+
+  it('auto-detects mixed shutdown shapes per shutdown', () => {
+    const fx = createCopilotFixture(tmp)
+    const sd = (mm: Record<string, ShutdownModelMetric>) => fx.ev.shutdown({ modelMetrics: mm })
+    const m = build('auto', fx, [
+      fx.ev.sessionStart(),
+      sd({ [M]: metric(100, 0, 0, 50, 0, 4) }),
+      fx.ev.sessionStart(),
+      sd({ [M]: metric(160, 0, 0, 80, 0, 6) }), // cumulative: +60/+30
+      fx.ev.sessionStart(),
+      sd({ [M]: metric(20, 0, 0, 10, 0, 1) }), // smaller → per-run: +20/+10
+    ])
+    expect(sum(m).t).toEqual({ input: 180, output: 90, reasoning: 0, cacheRead: 0, cacheWrite: 0 })
+  })
+
+  it('no estimate on call success without a started call; one when started', () => {
+    const fx = createCopilotFixture(tmp)
+    const m = build('auto', fx, [fx.ev.sessionStart(), fx.ev.modelCallSuccess({ prompt: 10, completion: 2, nanoAiu: 1e9, callId: 'x' })])
+    expect(m.drainUsage().estimates).toEqual([])
+    const m2 = build('auto', fx, [fx.ev.sessionStart(), fx.ev.modelCallStarted({ turn: 0 }), fx.ev.modelCallSuccess({ prompt: 10, completion: 2, nanoAiu: 1e9, callId: 'x', turn: 0 } as never)])
+    expect(m2.drainUsage().estimates.map((e) => e.inFlight)).toEqual([true, false])
   })
 
   it('live session shows checkpoint facts and no synthetic tokens; ended session drops them', () => {
