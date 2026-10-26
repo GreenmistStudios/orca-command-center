@@ -14,17 +14,18 @@ import { ViewTabs } from './ViewTabs'
 afterEach(() => { history.replaceState(null, '', '/'); resetMockBackend(); resetOccStore() })
 
 describe('Header', () => {
-  it('renders orca/stream pills, fleet pulse and the sources popover', async () => {
+  it('rolls connections into one status bubble whose overlay lists them all', async () => {
     renderWithMockStore(<Header />)
-    expect(screen.getByTestId('orca-pill')).toHaveTextContent('Connected to a running Orca (pid 97499).')
     act(() => useOcc.getState().setConnection('live'))
+    expect(screen.getByTestId('fleet-pulse')).toHaveTextContent(/needs you/)
+    const bubble = screen.getByTestId('status-bubble')
+    await userEvent.hover(bubble)
+    expect(await screen.findByTestId('orca-pill')).toHaveTextContent('Connected to a running Orca (pid 97499).')
     expect(screen.getByTestId('stream-pill')).toHaveTextContent('Live')
+    expect(screen.getAllByTestId('source-row')).toHaveLength(5)
     act(() => useOcc.getState().setConnection('reconnecting'))
     expect(screen.getByTestId('stream-pill')).toHaveTextContent('Stream reconnecting…')
-    expect(screen.getByTestId('fleet-pulse')).toHaveTextContent(/needs you/)
-    expect(screen.getByTestId('source-chip-orca-orchestration')).toHaveTextContent('orchestration v43')
-    await userEvent.click(screen.getByTestId('source-chips'))
-    expect(await screen.findAllByTestId('source-row')).toHaveLength(5)
+    expect(bubble).not.toHaveAttribute('data-health', 'ok')
   })
 
   it('"needs you" clears the selection; ⌘K opens the palette; theme toggles', async () => {
@@ -39,9 +40,11 @@ describe('Header', () => {
     expect(useOcc.getState().ui.theme).not.toBe(before)
   })
 
-  it('shows the grey pill when Orca is stopped', () => {
+  it('shows Orca stopped in the overlay', async () => {
     renderWithMockStore(<Header />, { bootstrap: mockBootstrap({ scenario: 'degraded' }) })
-    expect(screen.getByTestId('orca-pill')).toHaveTextContent('Orca isn’t running; showing last-known state.')
+    expect(screen.getByTestId('status-bubble')).not.toHaveAttribute('data-health', 'ok')
+    await userEvent.hover(screen.getByTestId('status-bubble'))
+    expect(await screen.findByTestId('orca-pill')).toHaveTextContent('Orca isn’t running; showing last-known state.')
   })
 })
 

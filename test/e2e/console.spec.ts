@@ -23,7 +23,8 @@ test.describe('console', () => {
 
     // Splash disappears → shell visible.
     await expect(page.getByTestId('shell')).toBeVisible()
-    await expect(page.getByTestId('stream-pill')).toHaveText(/Live/)
+    await page.getByTestId('status-bubble').hover()
+    await expect(page.getByTestId('stream-pill')).toContainText(/Live/)
 
     // Orca pid in header.
     const orca = page.getByTestId('orca-pill')
