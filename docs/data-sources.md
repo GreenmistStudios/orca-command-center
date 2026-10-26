@@ -26,10 +26,10 @@ v43, OpenCode DB with the `event` table, Copilot CLI session-state).
    `event` without an indexed predicate (`rowid >`, `session_id =`, `id =`, `message_id =`) or a
    `rowid DESC LIMIT n` window. Every such query in the code must have a test asserting its
    `EXPLAIN QUERY PLAN` uses `SEARCH` (not `SCAN`) on the big table.
-5. **Redact before serving.** All transcript-derived strings pass through `redact()` (token
-   patterns) and `stripAnsi()`; structured values pass through `redactJson()` (secret-named
-   keys). `data:` URLs are replaced with `"[data-url omitted]"`. Reasoning `metadata.*.signature`
-   fields are dropped.
+5. **Redact before serving.** All transcript-derived strings pass through `redactText()` (token
+   patterns and embedded `data:` URLs) and `stripAnsi()`; structured values pass through
+   `redactValue()` (secret-named keys, `data:` URL strings). `data:` URLs are replaced with
+   `"[data-url omitted]"`. Reasoning `metadata.*.signature` fields are dropped.
 
 ---
 

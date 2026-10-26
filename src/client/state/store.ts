@@ -9,6 +9,7 @@ import {
 import { api } from '../api/client'
 import { connectStream, type StreamHandle } from '../api/sse'
 import { getStored, setStored } from '../lib/storage'
+import { addNotice } from '../shell/notices'
 import { selectDescendants, selectRootSessions } from './selectors'
 import { readUrlSelection, startUrlSync } from './url'
 
@@ -236,6 +237,12 @@ let stream: StreamHandle | null = null
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 let stopUrlSync: (() => void) | null = null
 let resyncing: Promise<void> | null = null
+/** Bumped per refetch; only the latest refetch may apply its bootstrap. */
+let resyncEpoch = 0
+/** Bumped whenever lazy caches are reset, so stale in-flight loads can't repopulate them. */
+let cacheGen = 0
+/** Stream frames received while a bootstrap refetch is in flight (re-applied if newer than it). */
+let resyncBuffer: StreamEvent[] | null = null
 
 export const useOcc = create<OccState>()(
   subscribeWithSelector((set, get) => {
@@ -251,7 +258,8 @@ export const useOcc = create<OccState>()(
       const dk = `${slice}:${key}${o.dedupeKey ?? ''}`
       const running = inflight.get(dk)
       if (running) return running
-      const put = (l: Loadable<T>) => set((s) => ({ [slice]: { ...(s[slice] as Record<string, Loadable<T>>), [key]: l } }) as Partial<OccState>)
+      const gen = cacheGen
+      const put = (l: Loadable<T>) => { if (gen === cacheGen) set((s) => ({ [slice]: { ...(s[slice] as Record<string, Loadable<T>>), [key]: l } }) as Partial<OccState>) }
       put({ status: 'loading', data: cur?.data ?? null, error: null, fetchedAt: cur?.fetchedAt ?? null })
       const p = fetcher().then(
         (data) => {
@@ -267,17 +275,37 @@ export const useOcc = create<OccState>()(
       return p
     }
 
-    async function refetchBootstrap() {
-      if (resyncing) return resyncing
-      resyncing = (async () => {
+    /** Re-fetch what the current selection shows (lazy caches were just reset). */
+    function refreshSelection() {
+      const { selectedSessionId, selectedRootId } = get().ui
+      if (selectedSessionId) {
+        void get().fetchSessionDetail(selectedSessionId)
+        void get().fetchTranscript(selectedSessionId)
+      }
+      const root = selectedRootId ?? (selectedSessionId ? get().sessions[selectedSessionId]?.rootId : null)
+      if (root) void get().fetchTree(root)
+    }
+
+    function refetchBootstrap(): Promise<void> {
+      const mine = ++resyncEpoch
+      if (!resyncBuffer) resyncBuffer = []
+      const run: Promise<void> = (async () => {
         try {
           const b = await api.get('GET /api/bootstrap')
+          if (mine !== resyncEpoch) return // superseded by a newer refetch
+          const buffered = resyncBuffer ?? []
+          resyncBuffer = null
           get().applyBootstrap(b)
+          for (const e of buffered) if ('seq' in e && e.seq > b.seq) get().applyStreamEvent(e)
+          refreshSelection()
         } catch (err) {
+          if (mine !== resyncEpoch) return
+          resyncBuffer = null
           set({ bootstrapError: err instanceof Error ? err.message : String(err) })
-        } finally { resyncing = null }
+        } finally { void Promise.resolve().then(() => { if (resyncing === run) resyncing = null }) }
       })()
-      return resyncing
+      resyncing = run
+      return run
     }
 
     const selectionPatch = (sessionId: string | null, activityId: string | null = null): Partial<UiState> => {
@@ -307,7 +335,9 @@ export const useOcc = create<OccState>()(
         set({ connection: 'connecting' })
         try {
           const b = await api.get('GET /api/bootstrap')
+          const again = get().bootstrapped
           get().applyBootstrap(b)
+          if (again) refreshSelection()
         } catch (err) {
           set({ bootstrapError: err instanceof Error ? err.message : String(err), connection: 'offline' })
           retryTimer = setTimeout(() => { void get().init() }, 3000)
@@ -318,6 +348,7 @@ export const useOcc = create<OccState>()(
       },
 
       applyBootstrap(b) {
+        if (get().bootstrapped) { cacheGen++; inflight.clear() }
         set((s) => {
           const sessions: Record<string, SessionSummary> = {}
           for (const x of b.sessions) sessions[x.id] = x
@@ -334,7 +365,9 @@ export const useOcc = create<OccState>()(
               ui = { ...ui, selectedSessionId: d, selectedRootId: d }
             } else ui = { ...ui, selectedSessionId: null }
           }
+          const reset = s.bootstrapped ? { details: {}, trees: {}, transcripts: {}, parts: {}, diffs: {}, fileChanges: {}, artifacts: {}, scopedActivity: {}, runs: {}, tasks: {} } : {}
           return {
+            ...reset,
             meta: b.meta, bootstrapped: true, bootstrapError: null, seq: b.seq, sessions, activity: { byId, order: capped.map((e) => e.id), version: s.activity.version + 1 },
             orca: b.orca, attention: b.attention, stats: b.stats, orchestration: b.orchestration, lastEventAt: Date.now(), ui,
           }
@@ -349,6 +382,7 @@ export const useOcc = create<OccState>()(
           return
         }
         if (e.type === 'resync') { void refetchBootstrap(); return }
+        if (resyncBuffer) { resyncBuffer.push(e); return }
         if (e.seq <= st.seq) return // replayed frame we already applied
         switch (e.type) {
           case 'activity': {
@@ -423,6 +457,13 @@ export const useOcc = create<OccState>()(
               }
               return { seq: e.seq, lastEventAt: Date.now(), sessions, trees, details }
             })
+            // A selected session evicted from the window keeps its selection (no blank inspector):
+            // show the "outside the 24 h window" notice and still try to load its detail.
+            const sel = get().ui.selectedSessionId
+            if (sel && e.removed.includes(sel)) {
+              addNotice(`s:${sel}`, `Session ${sel} is outside the 24 h window.`)
+              void get().fetchSessionDetail(sel, { force: true })
+            }
             return
           }
           case 'orca':
@@ -537,6 +578,9 @@ export function resetOccStore(ui: Partial<UiState> = {}): void {
   if (retryTimer) { clearTimeout(retryTimer); retryTimer = null }
   stopUrlSync?.(); stopUrlSync = null
   resyncing = null
+  resyncEpoch++
+  cacheGen++
+  resyncBuffer = null
   useOcc.setState({ ...emptyData(), ui: { ...defaultUi(), ...ui } })
 }
 

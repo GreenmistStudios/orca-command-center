@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockBootstrap } from '../../../test/client/render'
+import { api } from '../api/client'
 import { createMockBackend, MOCK_IDS, resetMockBackend } from '../api/mock'
 import type { ActivityEvent, SessionSummary } from '../../shared/contract'
 import { ACTIVITY_RING_MAX, resetOccStore, useOcc } from './store'
@@ -151,5 +152,61 @@ describe('store', () => {
     expect(st().ui.dockWidth).toBe(320)
     st().toggleWorkspaceCollapsed('k')
     expect(st().ui.collapsedWorkspaces.k).toBe(true)
+  })
+
+  describe('resync', () => {
+    function deferBootstrap() {
+      let resolve!: (b: ReturnType<typeof mockBootstrap>) => void
+      const orig = api.get.bind(api)
+      const spy = vi.spyOn(api, 'get').mockImplementation(((route: string, ...rest: unknown[]) =>
+        route === 'GET /api/bootstrap' ? new Promise((r) => { resolve = r as typeof resolve }) : (orig as (...a: unknown[]) => unknown)(route, ...rest)) as typeof api.get)
+      return { resolve: (b: ReturnType<typeof mockBootstrap>) => resolve(b), spy }
+    }
+
+    it('re-applies frames newer than the bootstrap that arrived during the refetch', async () => {
+      const d = deferBootstrap()
+      const boot = mockBootstrap()
+      const seq0 = st().seq
+      st().applyStreamEvent({ type: 'resync' } as never)
+      const mk = (id: string) => ({ ...st().sessions[MOCK_IDS.rootBuild], title: id })
+      st().applyStreamEvent({ type: 'sessions', seq: seq0 + 1, sessions: [mk('older')], removed: [] } as never) // ≤ bootstrap.seq → dropped
+      st().applyStreamEvent({ type: 'sessions', seq: seq0 + 6, sessions: [mk('newer')], removed: [] } as never)
+      expect(st().sessions[MOCK_IDS.rootBuild].title).not.toBe('newer') // buffered, not applied
+      d.resolve({ ...boot, seq: seq0 + 5 })
+      await vi.waitFor(() => expect(st().seq).toBe(seq0 + 6))
+      expect(st().sessions[MOCK_IDS.rootBuild].title).toBe('newer')
+      vi.restoreAllMocks()
+    })
+
+    it('only the latest concurrent refetch applies', async () => {
+      const orig = api.get.bind(api)
+      const resolvers: Array<(b: ReturnType<typeof mockBootstrap>) => void> = []
+      vi.spyOn(api, 'get').mockImplementation(((route: string, ...rest: unknown[]) =>
+        route === 'GET /api/bootstrap' ? new Promise((r) => { resolvers.push(r as never) }) : (orig as (...a: unknown[]) => unknown)(route, ...rest)) as typeof api.get)
+      st().applyStreamEvent({ type: 'resync' } as never)
+      st().applyStreamEvent({ type: 'resync' } as never)
+      const boot = mockBootstrap()
+      resolvers[1]({ ...boot, seq: 50 })
+      await vi.waitFor(() => expect(st().seq).toBe(50))
+      resolvers[0]({ ...boot, seq: 10 })
+      await new Promise((r) => setTimeout(r, 10))
+      expect(st().seq).toBe(50)
+      vi.restoreAllMocks()
+    })
+
+    it('resets lazy caches on resync and refetches the selection', async () => {
+      await st().fetchRun('run_board_01')
+      await st().fetchSessionDetail(MOCK_IDS.blocked)
+      expect(st().runs.run_board_01.status).toBe('ready')
+      st().applyStreamEvent({ type: 'hello', bootId: 'other', meta: { ...st().meta!, bootId: 'other' } } as never)
+      await vi.waitFor(() => expect(st().runs.run_board_01).toBeUndefined())
+      await vi.waitFor(() => expect(st().details[MOCK_IDS.blocked]?.status).toBe('ready'))
+      expect(st().ui.selectedSessionId).toBe(MOCK_IDS.blocked)
+    })
+  })
+
+  it('keeps the selection when the selected session is removed', () => {
+    st().applyStreamEvent({ type: 'sessions', seq: st().seq + 1, sessions: [], removed: [MOCK_IDS.blocked] } as never)
+    expect(st().ui.selectedSessionId).toBe(MOCK_IDS.blocked)
   })
 })

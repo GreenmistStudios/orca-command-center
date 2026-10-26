@@ -47,13 +47,13 @@ function FleetPulse() {
   const clearSelection = useOcc((s) => s.selectSession)
   return (
     <div data-testid="fleet-pulse" className="flex items-center gap-2 text-[11px]">
-      <span className="flex items-center gap-1.5"><span className={cn('size-1.5 rounded-full', toneClasses('dispatched').dot)} /><b className="tabular-nums">{p.working}</b> working</span>
+      <span className="flex items-center gap-1.5" title="Agents currently working, including subagents"><span className={cn('size-1.5 rounded-full', toneClasses('dispatched').dot)} /><b className="tabular-nums">{p.working}</b> working</span>
       <span className="opacity-40">·</span>
-      <button type="button" onClick={() => clearSelection(null)} className={cn('focus-ring flex items-center gap-1.5 rounded', p.needsYou > 0 ? 'text-status-gate-ink font-medium' : 'text-muted-foreground')} title="Show attention panel">
+      <button type="button" onClick={() => clearSelection(null)} className={cn('focus-ring flex items-center gap-1.5 rounded', p.needsYou > 0 ? 'text-status-gate-ink font-medium' : 'text-muted-foreground')} title="Agents blocked or waiting on you, including subagents — show attention panel">
         <span className={cn('size-1.5 rounded-full', toneClasses('gate').dot)} /><b className="tabular-nums">{p.needsYou}</b> needs you
       </button>
       <span className="opacity-40">·</span>
-      <span className="text-muted-foreground flex items-center gap-1.5"><span className={cn('size-1.5 rounded-full', toneClasses('pending').dot)} /><b className="tabular-nums">{p.idle}</b> idle</span>
+      <span className="text-muted-foreground flex items-center gap-1.5" title="Agents idle or done, including subagents"><span className={cn('size-1.5 rounded-full', toneClasses('pending').dot)} /><b className="tabular-nums">{p.idle}</b> idle</span>
     </div>
   )
 }

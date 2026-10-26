@@ -7,6 +7,7 @@ export class CliError extends Error {
 export interface CliOptions {
   port: number
   host: string
+  allowRemote: boolean
   windowHours: number
   pollMs: number
   orcaPollMs: number
@@ -31,7 +32,8 @@ export const USAGE = `occ — Orca Command Center (read-only dashboard for agent
 Usage: occ [options]
 
   --port <n>             HTTP port (default 4270; error if in use)
-  --host <h>             Bind address (default 127.0.0.1; non-loopback has NO authentication)
+  --host <h>             Bind address (default 127.0.0.1; non-loopback requires --allow-remote; NO authentication)
+  --allow-remote         Permit a non-loopback --host (exposes all transcripts to the network)
   --window-hours <n>     Sessions window, 1-720 (default 24)
   --poll-ms <n>          SQLite change poll, 100-60000 (default 750)
   --orca-poll-ms <n>     Orca CLI poll, 1000-600000 (default 5000)
@@ -74,6 +76,7 @@ export function parseCli(argv: string[]): CliOptions | { help: true } | { versio
       options: {
         port: { type: 'string' },
         host: { type: 'string' },
+        'allow-remote': { type: 'boolean' },
         'window-hours': { type: 'string' },
         'poll-ms': { type: 'string' },
         'orca-poll-ms': { type: 'string' },
@@ -107,9 +110,16 @@ export function parseCli(argv: string[]): CliOptions | { help: true } | { versio
     return v
   }
   const host = str('host') ?? '127.0.0.1'
+  const allowRemote = !!values['allow-remote']
+  if (!isLoopbackHost(host) && !allowRemote) {
+    throw new CliError(
+      `refusing to serve on ${host} without --allow-remote: no authentication — every prompt, tool output and diff becomes readable`,
+    )
+  }
   return {
     port: int('port', values.port as string | undefined, 4270, 1, 65535),
     host,
+    allowRemote,
     windowHours: int('window-hours', values['window-hours'] as string | undefined, 24, 1, 720),
     pollMs: int('poll-ms', values['poll-ms'] as string | undefined, 750, 100, 60_000),
     orcaPollMs: int('orca-poll-ms', values['orca-poll-ms'] as string | undefined, 5000, 1000, 600_000),

@@ -14,7 +14,7 @@ import type {
   SourceStatus,
 } from '../../../shared/contract.js'
 import type { OrchestrationSource, OrchestrationUpdate, SourceDeps, Unsubscribe } from '../../types.js'
-import { redactText } from '../../lib/redact.js'
+import { redactText, redactValue } from '../../lib/redact.js'
 import { openReadOnly, type ReadOnlyDb } from '../../lib/sqlite.js'
 import { clip, truncate } from '../../lib/text.js'
 import { parseTime } from '../../lib/time.js'
@@ -243,7 +243,7 @@ export function createOrchestrationSource(deps: SourceDeps): OrchestrationSource
       for (const r of mr.rows) {
         const id = str(r.id)
         if (!id) continue
-        const payload = parseJson(r.payload) as Row | null
+        const payload = redactValue(parseJson(r.payload)) as Row | null
         const payloadTask = payload && typeof payload === 'object' ? str(payload.taskId) : null
         const rec = payloadTask ? taskRecs.get(payloadTask) : undefined
         const seq = num(r.sequence)

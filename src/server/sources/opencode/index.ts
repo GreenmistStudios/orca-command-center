@@ -612,7 +612,7 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
       const top = cursor
       for (const r of q().all<{ t: string | null }>(
         `SELECT DISTINCT json_extract(data, '$.part.tool') AS t FROM event WHERE rowid > ?`,
-        Math.max(0, top - 3000),
+        Math.max(0, top - 1000),
       )) {
         if (r.t) classifier.observe(r.t)
       }
@@ -730,23 +730,42 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
     }
     if (max === cursor) return
     const batch = newBatch()
+    let next = cursor
     for (let i = 0; i < MAX_BATCHES; i++) {
       const rs = q().all<EventRow>(
         'SELECT rowid, aggregate_id, type, data FROM event WHERE rowid > ? ORDER BY rowid LIMIT ?',
-        cursor,
+        next,
         EVENT_BATCH,
       )
       for (const r of rs) {
         absorb(batch, r)
-        cursor = r.rowid
+        next = r.rowid
       }
       if (rs.length < EVENT_BATCH) break
     }
-    unknownEvents += batch.unknown
-    malformedEvents += batch.malformed
-    lastChangeAt = now()
-    publish(processBatch(batch, 'opencode.event'))
+    try {
+      unknownEvents += batch.unknown
+      malformedEvents += batch.malformed
+      lastChangeAt = now()
+      publish(processBatch(batch, 'opencode.event'))
+    } catch (e) {
+      // keep the cursor so rows are retried; skip a poison batch after 3 consecutive failures
+      if (failCursor === cursor) failCount++
+      else {
+        failCursor = cursor
+        failCount = 1
+      }
+      if (failCount < 3) throw e
+      console.warn(`opencode: skipping event batch after ${failCount} failures at rowid ${cursor}`)
+      skippedBatches++
+      failCount = 0
+    }
+    cursor = next
   }
+
+  let failCursor = -1
+  let failCount = 0
+  let skippedBatches = 0
 
   function tickPolling(): void {
     const changed = q().all<SessionRow>(
@@ -882,13 +901,38 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
     if (anyFileParts) {
       const dir = dirOf(id)
       const files = new Set<string>()
-      for (const raw of q().all<{ data: string }>(
-        `SELECT data FROM part WHERE session_id = ? AND (json_extract(data, '$.tool') IN ${FILE_TOOL_SQL}
+      // Narrow projection: edit/write parts carry old/new bodies we never need.
+      type FileRow = {
+        type: string | null
+        tool: string | null
+        files: string | null
+        fp: string | null
+        p: string | null
+        pt: string | null
+        pa: string | null
+        df: string | null
+        inp: string | null
+      }
+      const patchy = `json_extract(data, '$.tool') IN ('apply_patch','patch')`
+      for (const r of q().all<FileRow>(
+        `SELECT json_extract(data, '$.type') AS type, json_extract(data, '$.tool') AS tool,
+                json_extract(data, '$.files') AS files,
+                json_extract(data, '$.state.input.filePath') AS fp, json_extract(data, '$.state.input.path') AS p,
+                CASE WHEN ${patchy} THEN json_extract(data, '$.state.input.patchText') END AS pt,
+                CASE WHEN ${patchy} THEN json_extract(data, '$.state.input.patch') END AS pa,
+                CASE WHEN ${patchy} THEN json_extract(data, '$.state.input.diff') END AS df,
+                CASE WHEN ${patchy} THEN json_extract(data, '$.state.input.input') END AS inp
+           FROM part WHERE session_id = ? AND (json_extract(data, '$.tool') IN ${FILE_TOOL_SQL}
             OR json_extract(data, '$.type') = 'patch') LIMIT 20000`,
         id,
       )) {
-        const j = parseJson(raw.data)
-        if (j) for (const f of filesOfPart(j, dir)) files.add(f)
+        const j = {
+          type: r.type,
+          tool: r.tool,
+          files: r.files ? (parseJson(r.files) ?? []) : [],
+          state: { input: { filePath: r.fp, path: r.p, patchText: r.pt, patch: r.pa, diff: r.df, input: r.inp } },
+        }
+        for (const f of filesOfPart(j, dir)) files.add(f)
       }
       c.filesTouched = files.size
     }
@@ -948,18 +992,18 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
     }
   }
 
+  function parseBefore(before: string | undefined): { ct: number; cid: string } {
+    if (before) {
+      const i = before.indexOf(':')
+      const t = Number(before.slice(0, i))
+      if (i > 0 && Number.isFinite(t)) return { ct: t, cid: before.slice(i + 1) }
+    }
+    return { ct: Number.MAX_SAFE_INTEGER, cid: '\uffff' }
+  }
+
   function getTranscript(id: string, opts: { before?: string; limit: number }): TranscriptPage {
     const limit = Math.max(1, Math.min(opts.limit || LIMITS.transcriptPageDefault, LIMITS.transcriptPageMax))
-    let ct = Number.MAX_SAFE_INTEGER
-    let cid = '\uffff'
-    if (opts.before) {
-      const i = opts.before.indexOf(':')
-      const t = Number(opts.before.slice(0, i))
-      if (i > 0 && Number.isFinite(t)) {
-        ct = t
-        cid = opts.before.slice(i + 1)
-      }
-    }
+    const { ct, cid } = parseBefore(opts.before)
     const msgRows = q().all<{ id: string; time_created: number; data: string }>(
       `SELECT id, time_created, data FROM message WHERE session_id = ?
          AND (time_created < ? OR (time_created = ? AND id < ?))
@@ -993,23 +1037,14 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
 
   function getActivity(ids: string[], opts: ActivityQueryOptions): ActivityPage {
     const limit = Math.max(1, Math.min(opts.limit || 100, LIMITS.activityPageMax))
-    let ct = Number.MAX_SAFE_INTEGER
-    let cid = '\uffff'
-    if (opts.before) {
-      const i = opts.before.indexOf(':')
-      const t = Number(opts.before.slice(0, i))
-      if (i > 0 && Number.isFinite(t)) {
-        ct = t
-        cid = opts.before.slice(i + 1)
-      }
-    }
+    const { ct, cid } = parseBefore(opts.before)
     const kinds = opts.kinds?.length ? new Set<ActivityKind>(opts.kinds) : null
     const fetchCap = Math.min(limit * 3 + 100, 5000)
-    const cands: Array<{ id: string; tc: number }> = []
+    const cands: Array<{ id: string; tc: number; raw: RawPartRow }> = []
     let saturated = false
     for (const sid of ids) {
-      const rs = q().all<{ id: string; tc: number }>(
-        `SELECT id, time_created AS tc FROM part WHERE session_id = ? AND time_updated >= ?
+      const rs = q().all<RawPartRow & { tc: number }>(
+        `SELECT ${PART_COLS}, time_created AS tc FROM part WHERE session_id = ? AND time_updated >= ?
            AND (time_created < ? OR (time_created = ? AND id < ?))
            ORDER BY time_created DESC, id DESC LIMIT ?`,
         sid,
@@ -1020,16 +1055,14 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
         fetchCap,
       )
       if (rs.length >= fetchCap) saturated = true
-      cands.push(...rs)
+      for (const r of rs) cands.push({ id: r.id, tc: r.tc, raw: r })
     }
     cands.sort((a, b) => b.tc - a.tc || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
     const got: Array<{ ev: ActivityEvent; tc: number; id: string }> = []
     let idx = 0
     while (idx < cands.length && got.length <= limit) {
       const c = cands[idx++]!
-      const raw = q().get<RawPartRow>(`SELECT ${PART_COLS} FROM part WHERE id = ?`, c.id)
-      if (!raw) continue
-      const n = normalizeRaw(raw)
+      const n = normalizeRaw(c.raw)
       if (!n || n.muted) continue
       if (kinds && !kinds.has(n.event.kind)) continue
       got.push({ ev: n.event, tc: c.tc, id: c.id })

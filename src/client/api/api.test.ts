@@ -107,3 +107,29 @@ describe('mock backend', () => {
     expect(frames.some((f) => f.type === 'activity')).toBe(true)
   })
 })
+
+describe('connectStream reconnect', () => {
+  it('reconnects with backoff after CLOSED, resuming from the last seq, and resets backoff on open', () => {
+    vi.useFakeTimers()
+    const states: string[] = []
+    const h = connectStream({ since: 1, onEvent: () => {}, onState: (s) => states.push(s) })
+    FakeEventSource.instances[0].onmessage?.({ data: JSON.stringify({ type: 'stats', seq: 9 }) } as MessageEvent<string>)
+    const fail = (i: number) => { const es = FakeEventSource.instances[i]; es.readyState = 2; es.onerror?.(new Event('error')) }
+    fail(0)
+    expect(states).toContain('offline')
+    vi.advanceTimersByTime(999); expect(FakeEventSource.instances).toHaveLength(1)
+    vi.advanceTimersByTime(1); expect(FakeEventSource.instances).toHaveLength(2)
+    expect(FakeEventSource.instances[1].url).toBe('/api/stream?since=9')
+    fail(1)
+    vi.advanceTimersByTime(1999); expect(FakeEventSource.instances).toHaveLength(2)
+    vi.advanceTimersByTime(1); expect(FakeEventSource.instances).toHaveLength(3)
+    FakeEventSource.instances[2].onopen?.(new Event('open'))
+    expect(states.at(-1)).toBe('live')
+    fail(2)
+    vi.advanceTimersByTime(1000); expect(FakeEventSource.instances).toHaveLength(4)
+    h.close()
+    fail(3)
+    vi.advanceTimersByTime(60_000); expect(FakeEventSource.instances).toHaveLength(4)
+    vi.useRealTimers()
+  })
+})

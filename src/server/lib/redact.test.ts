@@ -90,9 +90,20 @@ describe('redactValue', () => {
     expect(redactValue({ tokens: 5, maxTokens: 10 })).toEqual({ tokens: 5, maxTokens: 10 })
   })
 
-  it('replaces long data URLs only', () => {
+  it('replaces strings starting with data:', () => {
     expect(redactValue('data:image/png;base64,' + 'A'.repeat(100))).toBe(DATA_URL_PLACEHOLDER)
-    expect(redactValue('data:text/plain,hi')).toBe('data:text/plain,hi')
+    expect(redactValue('data:text/plain,hi')).toBe(DATA_URL_PLACEHOLDER)
+    expect(redactValue('data:image/png;base64,AAAA')).toBe(DATA_URL_PLACEHOLDER)
+  })
+
+  it('strips data URLs embedded in text', () => {
+    const b = 'iVBORw0KGgoAAAANSUhEUg=='
+    expect(redactText(`see data:image/png;base64,${b} done`)).toBe(`see ${DATA_URL_PLACEHOLDER} done`)
+    expect(redactText(`{"url":"data:image/png;base64,${b}","x":1}`)).toBe(`{"url":"${DATA_URL_PLACEHOLDER}","x":1}`)
+    expect(redactText(`a data:image/png;base64,${b} b data:image/gif;base64,${b}`)).toBe(`a ${DATA_URL_PLACEHOLDER} b ${DATA_URL_PLACEHOLDER}`)
+    expect(redactText('data:text/plain,' + 'x'.repeat(20))).toBe(DATA_URL_PLACEHOLDER)
+    expect(redactText('metadata:image/png;base64,AAAA')).toContain('metadata:')
+    expect(redactText('data: 123 and metadata: foo')).toBe('data: 123 and metadata: foo')
   })
 
   it('does not mutate input and limits depth', () => {

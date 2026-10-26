@@ -397,7 +397,7 @@ export function normalizePart(row: PartRow, ctx: NormalizeContext): Normalized |
         truncated: Boolean(inputStr?.truncated || out?.truncated || err?.truncated),
       }
       // summary: tool output (completed) / metadata.output (running) / error text; never read output
-      const summary = isRead ? null : err ? err.text : out ? safeText(rawOut ?? '', LIMITS.summaryChars).text : null
+      const summary = isRead ? null : err ? err.text : out ? truncate(out.text, LIMITS.summaryChars).text : null
       return {
         muted: false,
         event: {

@@ -1,6 +1,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowDownToLine, ArrowDown, Pause, Play, Search } from 'lucide-react'
 import { motion } from 'motion/react'
+import { useNow } from '../../hooks/useNow'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { HARNESS_META, type ActivityEvent, type ActivityKind, type Harness } from '../../../shared/contract'
 import { cn } from '../../lib/cn'
@@ -26,12 +27,7 @@ function useDebounced<T>(value: T, ms: number): T {
 
 function Ticking({ ev }: { ev: ActivityEvent }) {
   const running = ev.status === 'running' && ev.endTs == null
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!running) return
-    const t = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(t)
-  }, [running])
+  const now = useNow(1000)
   const ms = ev.endTs != null ? ev.endTs - ev.ts : running ? Math.max(0, now - ev.ts) : ev.tool?.durationMs ?? null
   return <span className="text-muted-foreground w-12 shrink-0 text-right font-mono text-[10.5px] tabular-nums">{ms != null ? formatDuration(ms) : ''}</span>
 }
@@ -69,7 +65,7 @@ const StreamRow = memo(function StreamRow({ ev, sessionTitle, agent, repeated, s
         tabIndex={0}
         aria-expanded={expanded}
         onClick={toggle}
-        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); toggle() } }}
+        onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle() } }}
         className="flex h-[30px] cursor-pointer items-center gap-2 px-3"
       >
         <span className="text-muted-foreground w-[58px] shrink-0 font-mono text-[10.5px] tabular-nums">{formatClock(ev.ts)}</span>
@@ -178,7 +174,13 @@ export function StreamView() {
   const live = useRef(rows)
   if (!filters.paused) live.current = rows
   const shown = filters.paused ? live.current : rows
-  const buffered = filters.paused ? Math.max(0, rows.length - shown.length) : 0
+  const buffered = useMemo(() => {
+    if (!filters.paused) return 0
+    const seen = new Set(shown.map((e) => e.id))
+    let n = 0
+    for (const e of rows) if (!seen.has(e.id)) n++
+    return n
+  }, [filters.paused, rows, shown])
 
   // Rows arriving after mount animate in.
   const prevIds = useRef<Set<string> | null>(null)

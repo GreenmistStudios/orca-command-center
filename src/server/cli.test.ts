@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { CliError, parseCli, type CliOptions } from './cli.js'
 
 describe('parseCli', () => {
+  it('refuses non-loopback host without --allow-remote', () => {
+    expect(() => parseCli(['--host', '0.0.0.0'])).toThrow(/refusing to serve on 0\.0\.0\.0 without --allow-remote/)
+    expect(() => parseCli(['--host', '0.0.0.0', '--allow-remote'])).not.toThrow()
+    expect(() => parseCli(['--host', 'localhost'])).not.toThrow()
+  })
+
   it('applies defaults', () => {
     const o = parseCli([]) as CliOptions
     expect(o).toMatchObject({ port: 4270, host: '127.0.0.1', windowHours: 24, pollMs: 750, orcaPollMs: 5000, ringSize: 20000, noOpen: false, dev: false })

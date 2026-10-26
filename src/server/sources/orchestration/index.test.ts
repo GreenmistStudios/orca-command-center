@@ -149,6 +149,20 @@ describe('rich', () => {
     await src.stop()
   })
 
+  it('redacts key-based payload secrets and token= in spec/result', async () => {
+    const { path, src } = await open('rich')
+    await src.stop()
+    appendMessage(path, { id: 'msg_sec', subject: 'secret', type: 'decision_gate', payload: '{"taskId":"task_r5","question":"Pick? token=abcd1234secretvalue","options":["a"],"apiKey":"SUPERSECRETKEY123"}' })
+    execSql(path, "UPDATE tasks SET spec='deploy with token=abcd1234secretvalue', result='password=hunter2hunter2' WHERE id='task_r5'")
+    const s2 = createOrchestrationSource(deps(path))
+    await s2.start()
+    const out = JSON.stringify([s2.getRun(RICH_RUN_ID), s2.getTask('task_r5')])
+    expect(out).not.toContain('SUPERSECRETKEY123')
+    expect(out).not.toContain('abcd1234secretvalue')
+    expect(out).not.toContain('hunter2hunter2')
+    await s2.stop()
+  })
+
   it('reply on thread resolves a message gate', async () => {
     const { path, src } = await open('rich')
     expect(src.getRun(RICH_RUN_ID)!.run.hasBlockingGate).toBe(true)

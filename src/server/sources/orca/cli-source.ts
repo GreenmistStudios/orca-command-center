@@ -123,6 +123,7 @@ export function createOrcaCliSource(deps: SourceDeps & { runner?: CliRunner }): 
       timer = null
       void tick()
     }, config.orcaPollMs)
+    timer.unref?.()
   }
 
   function tick(): Promise<void> {

@@ -413,3 +413,36 @@ describe('mcp config', () => {
   })
 })
 
+
+describe('model eviction', () => {
+  it('evicts idle models LRU, keeps snapshots, reloads on demand', async () => {
+    const fx = createCopilotFixture(tmp)
+    const old = new Date(Date.now() - 90 * 86_400_000)
+    for (let i = 0; i < 55; i++) {
+      fx.createSession(`o-${i}`, { events: [fx.ev.sessionStart(), fx.ev.user(`prompt ${i}`)] })
+      utimesSync(path.join(fx.sessionState, `o-${i}`, 'events.jsonl'), old, old)
+    }
+    const { src } = make(tmp, { windowMs: 86_400_000 })
+    await src.start()
+    for (let i = 0; i < 55; i++) expect(src.getSession(`o-${i}`)!.title).toBe(`prompt ${i}`)
+    await until(() => (src.health().detail ?? '').includes('50 parsed'))
+    // evicted (oldest-used) entries still list from snapshot when asked, and reload on demand
+    expect(src.listSessions(0)).toHaveLength(55)
+    expect(src.getSession('o-0')!.title).toBe('prompt 0')
+    expect(src.getCounters('o-0').messages).toBeGreaterThan(0)
+  })
+})
+
+describe('liveness without per-tick relisting', () => {
+  it('lock added then removed flips alive', async () => {
+    const fx = createCopilotFixture(tmp)
+    fx.createSession('l', { events: [fx.ev.sessionStart(), fx.ev.user('hi')] })
+    const { src } = make(tmp)
+    await src.start()
+    expect(src.getSession('l')!.processAlive).toBe(false)
+    fx.lock('l', process.pid)
+    await until(() => src.getSession('l')!.processAlive === true)
+    fx.unlock('l', process.pid)
+    await until(() => src.getSession('l')!.processAlive === false)
+  })
+})

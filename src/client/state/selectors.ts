@@ -116,13 +116,18 @@ export function selectFleetPulse(s: OccState): FleetPulse {
 
 export interface ActivityScope { rootId?: string | null; sessionId?: string | null; kinds?: readonly ActivityKind[] }
 
-let scopeCache: { version: number; byId: OccState['activity']['byId']; key: string; result: string[] } | null = null
+const SCOPE_CACHE_MAX = 8
+let scopeCacheVersion = -1
+let scopeCacheById: OccState['activity']['byId'] | null = null
+const scopeCache = new Map<string, string[]>()
 
-/** Ids (oldest → newest) of ring events matching the scope. Stable while the ring version is unchanged. */
+/** Ids (oldest → newest) of ring events matching the scope. Stable per scope while the ring version is unchanged. */
 export function selectActivityForScope(s: OccState, scope: ActivityScope): string[] {
   const key = `${scope.rootId ?? ''}|${scope.sessionId ?? ''}|${(scope.kinds ?? []).join(',')}`
   const { byId, order, version } = s.activity
-  if (scopeCache && scopeCache.version === version && scopeCache.byId === byId && scopeCache.key === key) return scopeCache.result
+  if (scopeCacheVersion !== version || scopeCacheById !== byId) { scopeCache.clear(); scopeCacheVersion = version; scopeCacheById = byId }
+  const hit = scopeCache.get(key)
+  if (hit) return hit
   const kinds = scope.kinds?.length ? new Set<ActivityKind>(scope.kinds) : null
   const result = order.filter((id) => {
     const e: ActivityEvent | undefined = byId[id]
@@ -132,7 +137,8 @@ export function selectActivityForScope(s: OccState, scope: ActivityScope): strin
     if (kinds && !kinds.has(e.kind)) return false
     return true
   })
-  scopeCache = { version, byId, key, result }
+  if (scopeCache.size >= SCOPE_CACHE_MAX) scopeCache.delete(scopeCache.keys().next().value as string)
+  scopeCache.set(key, result)
   return result
 }
 

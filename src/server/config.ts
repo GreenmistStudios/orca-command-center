@@ -2,7 +2,7 @@ import { statSync } from 'node:fs'
 import { homedir as osHomedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { CliError, type CliOptions } from './cli.js'
+import { CliError, isLoopbackHost, type CliOptions } from './cli.js'
 import { defaultCopilotDir, defaultOpencodeDb, defaultOrcaDirs, resolveOrcaCli } from './lib/paths.js'
 import type { Config } from './types.js'
 
@@ -119,7 +119,10 @@ export function resolveConfig(
   }
 
   const p = cli.port
-  const allowedHosts = [`${cli.host}:${p}`, `localhost:${p}`, `127.0.0.1:${p}`, `[::1]:${p}`]
+  const remote = !isLoopbackHost(cli.host)
+  const bound = cli.host.includes(':') && !cli.host.startsWith('[') ? `[${cli.host}]` : cli.host
+  const allowedHosts = remote ? [`${bound}:${p}`] : [`${cli.host}:${p}`, `localhost:${p}`, `127.0.0.1:${p}`, `[::1]:${p}`]
+  if (remote) notes.push(`Serving on ${cli.host}:${p} (--allow-remote): NO authentication — transcripts are readable by anyone who can reach this port`)
   if (cli.dev) allowedHosts.push('localhost:5173', '127.0.0.1:5173')
 
   const config: Config = {

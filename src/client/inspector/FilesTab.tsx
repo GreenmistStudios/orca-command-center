@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, FileText } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FileChange } from '../../shared/contract'
 import { shortPath } from '../lib/format'
 import { selectDescendants } from '../state/selectors'
@@ -50,6 +50,26 @@ export function FilesTab({ sessionId }: { sessionId: string }) {
   const rootChanges = useOcc((s) => (rootId ? s.fileChanges[`root:${rootId}`] : undefined))
   const fetchFileChanges = useOcc((s) => s.fetchFileChanges)
   useEffect(() => { if (withSubs && rootId) void fetchFileChanges({ rootId }) }, [withSubs, rootId, fetchFileChanges])
+
+  // Live sessions: refresh on change (updatedAt / fileChanges counter) and at most every 10 s.
+  const live = session?.live || (withSubs && descendants.some((d) => d.live))
+  const stamp = withSubs ? `${session?.updatedAt}:${descendants.map((d) => d.updatedAt).join(',')}` : `${session?.updatedAt}:${session?.counters?.fileChanges}`
+  const fetchDetail = useOcc((s) => s.fetchSessionDetail)
+  const firstStamp = useRef(stamp)
+  useEffect(() => {
+    if (!live || firstStamp.current === stamp) return
+    firstStamp.current = stamp
+    if (withSubs && rootId) void fetchFileChanges({ rootId }, { force: true })
+    else void fetchDetail(sessionId, { force: true })
+  }, [live, stamp, withSubs, rootId, sessionId, fetchFileChanges, fetchDetail])
+  useEffect(() => {
+    if (!live) return
+    const t = setInterval(() => {
+      if (withSubs && rootId) void fetchFileChanges({ rootId }, { force: true })
+      else void fetchDetail(sessionId, { force: true })
+    }, 10_000)
+    return () => clearInterval(t)
+  }, [live, withSubs, rootId, sessionId, fetchFileChanges, fetchDetail])
 
   const changes = useMemo(() => {
     if (!withSubs) return detail?.fileChanges ?? []

@@ -26,8 +26,11 @@ const RULES: Rule[] = [
   ],
 ]
 
+const DATA_URL_BASE64 = /\bdata:[a-z0-9.+-]+\/[a-z0-9.+-]+(?:;[a-z0-9-]+=[^,;\s"'`<>)\]]*)*;base64,[^\s"'`<>)\]]*/gi
+const DATA_URL_PLAIN = /\bdata:[a-z0-9.+-]+\/[a-z0-9.+-]+(?:;[a-z0-9-]+=[^,;\s"'`<>)\]]*)*,[^\s"'`<>)\]]{16,}/gi
+
 export function redactText(text: string): string {
-  let out = text
+  let out = text.replace(DATA_URL_BASE64, DATA_URL_PLACEHOLDER).replace(DATA_URL_PLAIN, DATA_URL_PLACEHOLDER)
   for (const [re, rep] of RULES) {
     out = out.replace(re, rep as string)
   }
@@ -38,7 +41,7 @@ export function redactText(text: string): string {
 export function redactValue(value: unknown, depth = 0): unknown {
   if (depth > MAX_DEPTH) return '[depth limit]'
   if (typeof value === 'string') {
-    if (value.length > 64 && value.startsWith('data:')) return DATA_URL_PLACEHOLDER
+    if (value.startsWith('data:')) return DATA_URL_PLACEHOLDER
     return redactText(value)
   }
   if (Array.isArray(value)) return value.map((v) => redactValue(v, depth + 1))

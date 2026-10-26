@@ -33,7 +33,16 @@ interface Entry {
   mtimeMs: number
   size: number
   model: SessionModel | null
+  /** Last session snapshot kept after the parsed model is evicted. */
+  snapshot?: HarnessSession
+  snapshotMtimeMs?: number
+  lastUsed?: number
+  wsMtimeMs?: number
+  dirMtimeMs?: number
+  lockPids?: number[]
 }
+
+const MAX_IDLE_MODELS = 50
 
 function readRange(file: string, start: number, end: number): Buffer {
   const fd = openSync(file, 'r')
@@ -102,21 +111,30 @@ export function createCopilotSource(deps: SourceDeps, options: CopilotSourceOpti
   const eventsFile = (e: Entry) => path.join(e.dir, 'events.jsonl')
 
   function refreshAlive(e: Entry): boolean {
-    let alive = false
     try {
-      for (const name of readdirSync(e.dir)) {
-        const m = /^inuse\.(\d+)\.lock$/.exec(name)
-        if (m && pidAlive(Number(m[1]))) alive = true
+      // Re-list the directory only when its mtime changed (lock files appear/disappear there).
+      const dm = statSync(e.dir).mtimeMs
+      if (dm !== e.dirMtimeMs || e.lockPids === undefined) {
+        e.dirMtimeMs = dm
+        e.lockPids = []
+        for (const name of readdirSync(e.dir)) {
+          const m = /^inuse\.(\d+)\.lock$/.exec(name)
+          if (m) e.lockPids.push(Number(m[1]))
+        }
       }
     } catch {
       /* ignore */
     }
-    return alive
+    return (e.lockPids ?? []).some(pidAlive)
   }
 
   function readWorkspace(e: Entry, model: SessionModel): void {
     try {
-      model.ws = parseWorkspaceYaml(readFileSync(path.join(e.dir, 'workspace.yaml'), 'utf8'))
+      const file = path.join(e.dir, 'workspace.yaml')
+      const mt = statSync(file).mtimeMs
+      if (mt === e.wsMtimeMs && model.ws) return
+      model.ws = parseWorkspaceYaml(readFileSync(file, 'utf8'))
+      e.wsMtimeMs = mt
     } catch {
       /* optional */
     }
@@ -176,7 +194,23 @@ export function createCopilotSource(deps: SourceDeps, options: CopilotSourceOpti
   }
 
   function ensure(e: Entry): SessionModel {
-    return e.model ?? load(e)
+    e.lastUsed = now()
+    if (e.model) return e.model
+    const m = load(e)
+    evictExcess(e)
+    return m
+  }
+
+  /** Keep at most MAX_IDLE_MODELS parsed models outside the window / not alive (LRU). */
+  function evictExcess(keep?: Entry): void {
+    const idle = [...entries.values()].filter((x) => x.model && x !== keep && !x.model.alive && !inWindow(x.mtimeMs))
+    if (idle.length <= MAX_IDLE_MODELS) return
+    idle.sort((a, b) => (a.lastUsed ?? 0) - (b.lastUsed ?? 0))
+    for (const x of idle.slice(0, idle.length - MAX_IDLE_MODELS)) {
+      x.snapshot = x.model!.toSession()
+      x.snapshotMtimeMs = x.mtimeMs
+      x.model = null
+    }
   }
 
   const inWindow = (mtimeMs: number) => mtimeMs >= now() - config.windowMs
@@ -295,14 +329,17 @@ export function createCopilotSource(deps: SourceDeps, options: CopilotSourceOpti
           e.mtimeMs = st.mtimeMs
           dirty = true
         }
+        const prevDirMtime = e.dirMtimeMs
         const alive = refreshAlive(e)
         if (alive !== m.alive) {
           m.alive = alive
           dirty = true
         }
         const oldTitle = m.ws?.name
-        readWorkspace(e, m)
+        // workspace.yaml is stat'ed only when the session had activity or its directory changed
+        if (dirty || e.dirMtimeMs !== prevDirMtime) readWorkspace(e, m)
         if (m.ws?.name !== oldTitle) dirty = true
+        e.snapshot = undefined
         if (dirty) {
           collect(m)
           if (m.copilotVersion) version = m.copilotVersion
@@ -311,6 +348,7 @@ export function createCopilotSource(deps: SourceDeps, options: CopilotSourceOpti
         log.warn(`copilot: failed reading session ${e.id}`, err)
       }
     }
+    evictExcess()
     setHealth()
     if (changedSessions.size || changedEvents.size) lastChangeAt = now()
     if (initial) return
@@ -409,7 +447,7 @@ export function createCopilotSource(deps: SourceDeps, options: CopilotSourceOpti
       const out: HarnessSession[] = []
       for (const e of entries.values()) {
         if (!e.model && e.mtimeMs < sinceMs) continue
-        const s = ensure(e).toSession()
+        const s = !e.model && e.snapshot && e.snapshotMtimeMs === e.mtimeMs ? e.snapshot : ensure(e).toSession()
         if (s.updatedAt >= sinceMs) out.push(s)
       }
       return out

@@ -59,4 +59,13 @@ describe('selectors', () => {
     const mcp = selectActivityForScope(st(), { rootId: MOCK_IDS.rootBuild, kinds: ['mcp'] })
     expect(mcp.every((id) => st().activity.byId[id].kind === 'mcp')).toBe(true)
   })
+
+  it('selectActivityForScope returns stable arrays per scope across alternating scopes', () => {
+    const a = { rootId: MOCK_IDS.rootBuild }
+    const b = { sessionId: MOCK_IDS.coderViewModel }
+    const ra = selectActivityForScope(st(), a)
+    const rb = selectActivityForScope(st(), b)
+    expect(selectActivityForScope(st(), a)).toBe(ra)
+    expect(selectActivityForScope(st(), b)).toBe(rb)
+  })
 })

@@ -55,12 +55,18 @@ describe('resolveConfig', () => {
   it('disable flags null out sources; dev adds vite hosts and no staticDir', () => {
     const h = home()
     mkdirSync(path.join(h, '.copilot'))
-    const { config } = resolveConfig(cli('--dev', '--no-copilot', '--no-orca-cli', '--host', '0.0.0.0'), {}, { ...base, homedir: h })
+    const { config } = resolveConfig(cli('--dev', '--no-copilot', '--no-orca-cli', '--host', '0.0.0.0', '--allow-remote'), {}, { ...base, homedir: h })
     expect(config.copilotDir).toBeNull()
     expect(config.staticDir).toBeNull()
     expect(config.allowedHosts).toContain('localhost:5173')
     expect(config.allowedHosts).toContain('127.0.0.1:5173')
     expect(config.allowedHosts).toContain('0.0.0.0:4270')
+  })
+
+  it('remote host allowlists only the bound address', () => {
+    const { config, notes } = resolveConfig(cli('--host', '192.168.1.5', '--allow-remote', '--port', '4300'), {}, { ...base, homedir: home() })
+    expect(config.allowedHosts).toEqual(['192.168.1.5:4300'])
+    expect(notes.join('\n')).toMatch(/allow-remote/)
   })
 
   it('orcaCli: explicit wins over discovery', () => {

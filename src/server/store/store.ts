@@ -81,11 +81,26 @@ export const createStore: CreateStore = (deps): Store => {
   const children = new Map<string, Set<string>>()
   const extras = new Set<string>()
   const summaries = new Map<string, SessionSummary>()
-  const summaryJson = new Map<string, string>()
   const observed = new Map<string, { state: AgentState; since: EpochMs | null }>()
   const stalled = new Set<string>()
   const childrenLoaded = new Set<string>()
-  const unknownIds = new Set<string>()
+  const unknownIds = new Map<string, EpochMs>()
+  const UNKNOWN_TTL_MS = 5 * 60_000
+  const UNKNOWN_MAX = 5000
+  const isUnknown = (id: string): boolean => {
+    const at = unknownIds.get(id)
+    if (at === undefined) return false
+    if (now() - at > UNKNOWN_TTL_MS) {
+      unknownIds.delete(id)
+      return false
+    }
+    return true
+  }
+  const markUnknown = (id: string): void => {
+    unknownIds.delete(id)
+    unknownIds.set(id, now())
+    while (unknownIds.size > UNKNOWN_MAX) unknownIds.delete(unknownIds.keys().next().value as string)
+  }
   const counterCache = new Map<string, { value: SessionCounters; at: number }>()
   const pendingCounters = new Set<string>()
 
@@ -138,7 +153,7 @@ export const createStore: CreateStore = (deps): Store => {
     for (let i = 0; cur?.parentId && i < 30; i++) {
       let parent = sessions.get(cur.parentId)
       if (!parent) {
-        if (unknownIds.has(cur.parentId)) break
+        if (isUnknown(cur.parentId)) break
         let loaded: HarnessSession | null = null
         try {
           loaded = harnessByName.get(cur.harness)?.getSession(cur.parentId) ?? null
@@ -146,7 +161,7 @@ export const createStore: CreateStore = (deps): Store => {
           log.debug('store: getSession(%s) failed: %s', cur.parentId, String(e))
         }
         if (!loaded) {
-          unknownIds.add(cur.parentId)
+          markUnknown(cur.parentId)
           break
         }
         ingestSession(loaded, true)
@@ -162,7 +177,7 @@ export const createStore: CreateStore = (deps): Store => {
   function findSession(id: string): HarnessSession | null {
     const known = sessions.get(id)
     if (known) return known
-    if (unknownIds.has(id)) return null
+    if (isUnknown(id)) return null
     for (const src of sources.harnesses) {
       try {
         const hs = src.getSession(id)
@@ -176,7 +191,7 @@ export const createStore: CreateStore = (deps): Store => {
         log.debug('store: getSession failed: %s', String(e))
       }
     }
-    unknownIds.add(id)
+    markUnknown(id)
     return null
   }
 
@@ -202,20 +217,38 @@ export const createStore: CreateStore = (deps): Store => {
 
   function descendantsKnown(rootId: string, cap = MAX_TREE_NODES): string[] {
     const out: string[] = [rootId]
+    const seen = new Set<string>(out)
     for (let i = 0; i < out.length && out.length < cap; i++) {
-      for (const c of children.get(out[i]!) ?? []) if (sessions.has(c) && !out.includes(c)) out.push(c)
+      for (const c of children.get(out[i]!) ?? []) if (sessions.has(c) && !seen.has(c)) {
+          seen.add(c)
+          out.push(c)
+        }
     }
     return out
   }
 
-  function descendantCount(id: string): number {
-    return descendantsKnown(id, 5000).length - 1
+  /** Subtree size (incl. self), memoised per rebuild pass; cycle-safe. */
+  function subtreeSize(id: string, memo: Map<string, number>, visiting: Set<string>): number {
+    const hit = memo.get(id)
+    if (hit !== undefined) return hit
+    if (visiting.has(id)) return 0
+    visiting.add(id)
+    let n = 1
+    for (const c of children.get(id) ?? []) if (sessions.has(c)) n += subtreeSize(c, memo, visiting)
+    visiting.delete(id)
+    memo.set(id, n)
+    return n
+  }
+
+  function descendantCount(id: string, memo: Map<string, number>): number {
+    return Math.min(subtreeSize(id, memo, new Set()), 5000) - 1
   }
 
   /** Load every descendant (via getChildren) of a root; returns the ids loaded now. */
   function loadTree(rootId: string): string[] {
     const added: string[] = []
     const queue = [rootId]
+    const queued = new Set<string>(queue)
     for (let i = 0; i < queue.length && queue.length < MAX_TREE_NODES; i++) {
       const id = queue[i]!
       const src = srcOf(id)
@@ -232,7 +265,10 @@ export const createStore: CreateStore = (deps): Store => {
           log.debug('store: getChildren(%s) failed: %s', id, String(e))
         }
       }
-      for (const c of children.get(id) ?? []) if (sessions.has(c) && !queue.includes(c)) queue.push(c)
+      for (const c of children.get(id) ?? []) if (sessions.has(c) && !queued.has(c)) {
+        queued.add(c)
+        queue.push(c)
+      }
     }
     if (added.length) rebuild([...added, ...ancestorIds(rootId), rootId])
     return added
@@ -253,7 +289,9 @@ export const createStore: CreateStore = (deps): Store => {
     }
   }
 
-  function buildSummary(id: string, t: EpochMs, linkCache: Map<string, ReturnType<JoinIndex['linkRoot']>>): SessionSummary | null {
+  function buildSummary(id: string, t: EpochMs, linkCache: Map<string, ReturnType<JoinIndex['linkRoot']>>,
+    sizeMemo: Map<string, number>,
+  ): SessionSummary | null {
     const hs = sessions.get(id)
     if (!hs) return null
     const rootId = rootOf(id)
@@ -323,24 +361,44 @@ export const createStore: CreateStore = (deps): Store => {
       tokens: hs.tokens,
       cost: hs.cost,
       childIds: kids,
-      descendantCount: kids.length === 0 ? 0 : descendantCount(id),
+      descendantCount: kids.length === 0 ? 0 : descendantCount(id, sizeMemo),
       spawn: hs.spawn,
       orca,
       facts: hs.facts,
     }
   }
 
+  const sameJson = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b)
+  /** Cheap field-wise comparison: primitives/identity first, JSON only for differing object refs. */
+  function summaryEqual(a: SessionSummary, b: SessionSummary): boolean {
+    const x = a as unknown as Record<string, unknown>
+    const y = b as unknown as Record<string, unknown>
+    for (const k in y) {
+      const u = x[k]
+      const v = y[k]
+      if (u === v) continue
+      if (typeof u !== 'object' || typeof v !== 'object' || !u || !v) return false
+      if (k === 'childIds') {
+        const ua = u as string[]
+        const va = v as string[]
+        if (ua.length !== va.length || ua.some((c, i) => c !== va[i])) return false
+      } else if (!sameJson(u, v)) return false
+    }
+    for (const k in x) if (!(k in y) && x[k] !== undefined) return false
+    return true
+  }
+
   /** Rebuild summaries; returns the ones whose JSON changed. */
   function rebuild(ids: Iterable<string>, force = false): SessionSummary[] {
     const t = now()
     const linkCache = new Map<string, ReturnType<JoinIndex['linkRoot']>>()
+    const sizeMemo = new Map<string, number>()
     const changed: SessionSummary[] = []
     for (const id of new Set(ids)) {
-      const s = buildSummary(id, t, linkCache)
+      const s = buildSummary(id, t, linkCache, sizeMemo)
       if (!s) continue
-      const json = JSON.stringify(s)
-      if (!force && summaryJson.get(id) === json) continue
-      summaryJson.set(id, json)
+      const old = summaries.get(id)
+      if (!force && old && summaryEqual(old, s)) continue
       summaries.set(id, s)
       changed.push(s)
     }
@@ -563,9 +621,14 @@ export const createStore: CreateStore = (deps): Store => {
   }
 
   function toolStatsFor(windowMs: number): ToolStat[] {
-    const hit = toolStatsCache.get(String(windowMs))
+    const key = String(windowMs)
+    const hit = toolStatsCache.get(key)
     const t = now()
-    if (hit && t - hit.at < TOOL_STATS_TTL_MS) return hit.value
+    if (hit && t - hit.at < TOOL_STATS_TTL_MS) {
+      toolStatsCache.delete(key)
+      toolStatsCache.set(key, hit)
+      return hit.value
+    }
     const byHarness = groupByHarness(windowSessions(windowMs).map((s) => s.id))
     const out: ToolStat[] = []
     for (const [src, ids] of byHarness) {
@@ -575,7 +638,9 @@ export const createStore: CreateStore = (deps): Store => {
         log.debug('store: getToolStats failed: %s', String(e))
       }
     }
-    toolStatsCache.set(String(windowMs), { at: t, value: out })
+    toolStatsCache.delete(key)
+    toolStatsCache.set(key, { at: t, value: out })
+    while (toolStatsCache.size > 8) toolStatsCache.delete(toolStatsCache.keys().next().value as string)
     return out
   }
 
@@ -737,7 +802,6 @@ export const createStore: CreateStore = (deps): Store => {
       sessions.delete(id)
       children.delete(id)
       summaries.delete(id)
-      summaryJson.delete(id)
       counterCache.delete(id)
       extras.delete(id)
       gone.push(id)
@@ -815,19 +879,19 @@ export const createStore: CreateStore = (deps): Store => {
       const since = t - config.windowMs
       const vis = visibleIds()
       const removed: string[] = []
+      const parents: Array<[string, string | null | undefined]> = []
       for (const [id, hs] of [...sessions]) {
         if (extras.has(id) || vis.has(id) || hs.updatedAt >= since) continue
         if (summaries.get(id)?.live) continue
+        parents.push([id, hs.parentId])
         sessions.delete(id)
         summaries.delete(id)
-        summaryJson.delete(id)
         counterCache.delete(id)
         observed.delete(id)
         stalled.delete(id)
         removed.push(id)
       }
-      for (const id of removed) {
-        const p = sessions.get(id)?.parentId
+      for (const [id, p] of parents) {
         if (p) children.get(p)?.delete(id)
         children.delete(id)
       }
@@ -836,12 +900,10 @@ export const createStore: CreateStore = (deps): Store => {
           extras.delete(id)
           sessions.delete(id)
           summaries.delete(id)
-          summaryJson.delete(id)
         }
       }
       const changed = rebuild(sessions.keys())
       publishSessions(changed, removed)
-      unknownIds.clear()
       recomputeAttention()
       statsDirty = true
     } catch (e) {
@@ -892,11 +954,17 @@ export const createStore: CreateStore = (deps): Store => {
       orchestration: orchestrationSummary(),
       stats: stats(),
     }
-    let size = JSON.stringify(payload).length
-    while (size > MAX_BOOTSTRAP_BYTES && activity.length > 20) {
-      activity = activity.slice(Math.floor(activity.length / 4))
+    const size = JSON.stringify(payload).length
+    if (size > MAX_BOOTSTRAP_BYTES && activity.length > 20) {
+      // estimate per-event cost once, then drop the oldest events in a single pass
+      const sizes = activity.map((e) => JSON.stringify(e).length + 1)
+      let total = size
+      let drop = 0
+      while (total > MAX_BOOTSTRAP_BYTES && activity.length - drop > 20) {
+        total -= sizes[drop++]!
+      }
+      activity = activity.slice(drop)
       payload.activity = activity
-      size = JSON.stringify(payload).length
     }
     return payload
   }
