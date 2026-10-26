@@ -1,1 +1,347 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Orca Command Center — tokens copied from docs/design-system.md (orca-viz vocabulary). */
+:root {
+  --radius: 0.625rem;
+  --field: oklch(95.5% 0.003 286.3);
+  --background: oklch(99.5% 0 0);
+  --panel: oklch(100% 0 0 / 0.86);
+  --panel-solid: oklch(100% 0 0);
+  --muted: oklch(97.3% 0.001 286.4);
+  --accent: oklch(96.7% 0.001 286.4);
+  --panel-border: oklch(90% 0.004 286.3);
+  --border: oklch(92% 0.004 286.3);
+  --input: oklch(92% 0.004 286.3);
+  --foreground: oklch(21% 0.006 285.9);
+  --muted-foreground: oklch(55.2% 0.014 285.9);
+  --primary: oklch(21% 0.006 285.9);
+  --primary-foreground: oklch(98.5% 0 0);
+  --selection: oklch(62% 0.19 259.8);
+  --ring: oklch(62% 0.19 259.8);
+  --selection-soft: oklch(97% 0.014 254.6);
+  --selection-ink: oklch(42% 0.16 264.4);
+  --destructive: oklch(57.7% 0.245 27.3);
+  --grid-line: oklch(21% 0.006 285.9 / 0.045);
+  --field-glow: oklch(62% 0.19 259.8 / 0.06);
+  --sheen: oklch(100% 0 0 / 0.75);
+  --glow-strength: 0.42;
+  --spotlight-strength: 0.1;
+  --lift-1: 0 1px 2px oklch(21% 0.006 285.9 / 0.05), 0 1px 1px oklch(21% 0.006 285.9 / 0.04);
+  --lift-2: 0 2px 4px oklch(21% 0.006 285.9 / 0.04), 0 6px 16px -4px oklch(21% 0.006 285.9 / 0.08),
+    0 0 0 1px oklch(21% 0.006 285.9 / 0.03);
+
+  --status-pending: #a1a1aa; --status-pending-soft: #f4f4f5; --status-pending-ink: #3f3f46;
+  --status-ready: #3b82f6; --status-ready-soft: #dbeafe; --status-ready-ink: #1e3a8a;
+  --status-dispatched: #f59e0b; --status-dispatched-soft: #fef3c7; --status-dispatched-ink: #78350f;
+  --status-completed: #22c55e; --status-completed-soft: #dcfce7; --status-completed-ink: #14532d;
+  --status-failed: #ef4444; --status-failed-soft: #fee2e2; --status-failed-ink: #7f1d1d;
+  --status-blocked: #a855f7; --status-blocked-soft: #f3e8ff; --status-blocked-ink: #581c87;
+  --status-unknown: #71717a; --status-unknown-soft: #e4e4e7; --status-unknown-ink: #27272a;
+  --status-gate: #f97316; --status-gate-soft: #ffedd5; --status-gate-ink: #9a3412;
+  --warn-text: #bb4d00;
+  --danger-text: #c10007;
+
+  --agent-1: #0d9488; --agent-2: #db2777; --agent-3: #4f46e5; --agent-4: #57534e;
+  --agent-5: #0891b2; --agent-6: #65a30d; --agent-7: #c026d3; --agent-8: #e11d48;
+  --agent-ink: #fff;
+
+  --harness-opencode-bg: var(--foreground); --harness-opencode-fg: var(--background);
+  --harness-copilot-bg: #6d28d9; --harness-copilot-fg: #fff;
+  --harness-claude-bg: #c2410c; --harness-claude-fg: #fff;
+  --harness-codex-bg: #047857; --harness-codex-fg: #fff;
+  --harness-unknown-bg: var(--muted); --harness-unknown-fg: var(--muted-foreground);
+
+  --kind-prompt: #0284c7; --kind-thinking: #7c3aed; --kind-text: var(--muted-foreground);
+  --kind-tool: #2563eb; --kind-mcp: #0d9488; --kind-file-change: #16a34a; --kind-subagent: #db2777;
+  --kind-todo: #475569; --kind-step: var(--muted-foreground); --kind-state: #d97706;
+  --kind-permission: #f97316; --kind-error: #dc2626; --kind-orchestration: #4f46e5;
+}
+
+.dark {
+  --field: oklch(11.5% 0.008 274);
+  --background: oklch(15.5% 0.006 274);
+  --panel: oklch(20.5% 0.008 274 / 0.72);
+  --panel-solid: oklch(20.5% 0.008 274);
+  --muted: oklch(25% 0.008 274);
+  --accent: oklch(29% 0.01 274);
+  --panel-border: oklch(32% 0.009 274);
+  --border: oklch(32% 0.009 274);
+  --input: oklch(34% 0.01 274);
+  --foreground: oklch(96% 0.001 286.4);
+  --muted-foreground: oklch(70% 0.014 280);
+  --primary: oklch(92% 0.004 286.3);
+  --primary-foreground: oklch(21% 0.006 285.9);
+  --selection-soft: oklch(32% 0.07 258.4);
+  --selection-ink: oklch(93% 0.03 255.5);
+  --destructive: oklch(66% 0.2 25.3);
+  --grid-line: oklch(96% 0.001 286.4 / 0.035);
+  --field-glow: oklch(62% 0.19 259.8 / 0.1);
+  --sheen: oklch(100% 0 0 / 0.07);
+  --glow-strength: 0.85;
+  --spotlight-strength: 0.16;
+  --lift-1: 0 1px 2px oklch(0% 0 0 / 0.4);
+  --lift-2: 0 2px 6px oklch(0% 0 0 / 0.35), 0 8px 24px -6px oklch(0% 0 0 / 0.5), 0 0 0 1px oklch(100% 0 0 / 0.03);
+
+  --status-pending-soft: #27272a; --status-pending-ink: #d4d4d8;
+  --status-ready-soft: #172554; --status-ready-ink: #bfdbfe;
+  --status-dispatched-soft: #431f07; --status-dispatched-ink: #fde68a;
+  --status-completed-soft: #052e16; --status-completed-ink: #bbf7d0;
+  --status-failed-soft: #450a0a; --status-failed-ink: #fecaca;
+  --status-blocked-soft: #2e1065; --status-blocked-ink: #e9d5ff;
+  --status-unknown-soft: #3f3f46; --status-unknown-ink: #e4e4e7;
+  --status-gate-soft: #431407; --status-gate-ink: #fed7aa;
+  --warn-text: #ffb900;
+  --danger-text: #ff6467;
+
+  --agent-1: #2dd4bf; --agent-2: #f472b6; --agent-3: #a5b4fc; --agent-4: #a8a29e;
+  --agent-5: #67e8f9; --agent-6: #bef264; --agent-7: #f0abfc; --agent-8: #fda4af;
+  --agent-ink: #09090b;
+
+  --harness-copilot-bg: #a78bfa; --harness-copilot-fg: #09090b;
+  --harness-claude-bg: #fdba74; --harness-claude-fg: #09090b;
+  --harness-codex-bg: #6ee7b7; --harness-codex-fg: #09090b;
+
+  --kind-prompt: #7dd3fc; --kind-thinking: #c4b5fd; --kind-tool: #93c5fd; --kind-mcp: #5eead4;
+  --kind-file-change: #86efac; --kind-subagent: #f9a8d4; --kind-todo: #cbd5e1; --kind-state: #fcd34d;
+  --kind-permission: #fdba74; --kind-error: #fca5a5; --kind-orchestration: #a5b4fc;
+}
+
+@theme inline {
+  --color-field: var(--field);
+  --color-background: var(--background);
+  --color-panel: var(--panel);
+  --color-panel-solid: var(--panel-solid);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-panel-border: var(--panel-border);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-selection: var(--selection);
+  --color-selection-soft: var(--selection-soft);
+  --color-selection-ink: var(--selection-ink);
+  --color-destructive: var(--destructive);
+  --color-ring: var(--ring);
+  --color-warn: var(--warn-text);
+  --color-danger: var(--danger-text);
+
+  --color-status-pending: var(--status-pending);
+  --color-status-pending-soft: var(--status-pending-soft);
+  --color-status-pending-ink: var(--status-pending-ink);
+  --color-status-ready: var(--status-ready);
+  --color-status-ready-soft: var(--status-ready-soft);
+  --color-status-ready-ink: var(--status-ready-ink);
+  --color-status-dispatched: var(--status-dispatched);
+  --color-status-dispatched-soft: var(--status-dispatched-soft);
+  --color-status-dispatched-ink: var(--status-dispatched-ink);
+  --color-status-completed: var(--status-completed);
+  --color-status-completed-soft: var(--status-completed-soft);
+  --color-status-completed-ink: var(--status-completed-ink);
+  --color-status-failed: var(--status-failed);
+  --color-status-failed-soft: var(--status-failed-soft);
+  --color-status-failed-ink: var(--status-failed-ink);
+  --color-status-blocked: var(--status-blocked);
+  --color-status-blocked-soft: var(--status-blocked-soft);
+  --color-status-blocked-ink: var(--status-blocked-ink);
+  --color-status-unknown: var(--status-unknown);
+  --color-status-unknown-soft: var(--status-unknown-soft);
+  --color-status-unknown-ink: var(--status-unknown-ink);
+  --color-status-gate: var(--status-gate);
+  --color-status-gate-soft: var(--status-gate-soft);
+  --color-status-gate-ink: var(--status-gate-ink);
+
+  --color-kind-prompt: var(--kind-prompt);
+  --color-kind-thinking: var(--kind-thinking);
+  --color-kind-text: var(--kind-text);
+  --color-kind-tool: var(--kind-tool);
+  --color-kind-mcp: var(--kind-mcp);
+  --color-kind-file-change: var(--kind-file-change);
+  --color-kind-subagent: var(--kind-subagent);
+  --color-kind-todo: var(--kind-todo);
+  --color-kind-step: var(--kind-step);
+  --color-kind-state: var(--kind-state);
+  --color-kind-permission: var(--kind-permission);
+  --color-kind-error: var(--kind-error);
+  --color-kind-orchestration: var(--kind-orchestration);
+
+  --shadow-lift-1: var(--lift-1);
+  --shadow-lift-2: var(--lift-2);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  --spacing-13: 3.25rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  html, body, #root { height: 100%; }
+  body {
+    background: var(--field);
+    color: var(--foreground);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    font-family: var(--font-sans);
+  }
+  button { cursor: pointer; }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-panel-border bg-panel shadow-lift-2 backdrop-blur-xl;
+  }
+  .panel-header {
+    @apply flex shrink-0 flex-col gap-2.5 border-b border-panel-border/70 px-4 py-3;
+  }
+  .section-label {
+    @apply text-muted-foreground text-[11px] font-semibold tracking-widest uppercase;
+  }
+  .float-pill {
+    @apply bg-panel border-panel-border shadow-lift-2 rounded-full border backdrop-blur-xl;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-selection/35 bg-selection-soft px-2 py-0.5 text-[11px] font-medium text-selection-ink hover:border-selection/60;
+  }
+  .status-pill {
+    @apply flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium;
+  }
+  .neutral-pill {
+    @apply text-muted-foreground bg-muted border-transparent;
+  }
+  .monogram {
+    @apply flex shrink-0 items-center justify-center rounded-md font-mono font-bold tracking-tight;
+  }
+  .pre-block {
+    @apply bg-muted/60 border border-panel-border/60 rounded-lg p-2.5 font-mono text-[11px] leading-relaxed max-h-56 overflow-auto whitespace-pre-wrap break-words;
+  }
+  .focus-ring {
+    @apply focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none;
+  }
+  .field-bg {
+    background:
+      radial-gradient(60% 50% at 50% 0%, var(--field-glow), transparent),
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+    background-size: 100% 100%, 32px 32px, 32px 32px;
+  }
+  .view-tab {
+    @apply flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none;
+  }
+  .view-tab[aria-selected="true"] {
+    @apply bg-selection/15 text-foreground;
+  }
+  .seg-track {
+    @apply bg-muted/70 flex gap-0.5 rounded-lg p-0.5;
+  }
+  .seg-item {
+    @apply relative flex-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none;
+  }
+  .seg-item[aria-checked="true"], .seg-item[aria-selected="true"] {
+    @apply text-foreground;
+  }
+}
+
+/* ─────────── Motion ─────────── */
+@keyframes orca-radar {
+  0% { opacity: 0.55; transform: scale(1); }
+  70% { opacity: 0; }
+  to { opacity: 0; transform: scale(2.8); }
+}
+@keyframes orca-pulse {
+  0% { box-shadow: 0 0 0 3px var(--orca-pulse, var(--selection)); }
+  to { box-shadow: 0 0 0 10px #0000; }
+}
+@keyframes orca-drift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(8%, -12%, 0) scale(1.15); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes orca-shimmer {
+  0% { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@keyframes orca-spin { to { transform: rotate(360deg); } }
+
+@property --orca-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes orca-alive { to { --orca-angle: 360deg; } }
+
+.orca-alive {
+  position: absolute;
+  inset: -3px;
+  border-radius: 17px;
+  pointer-events: none;
+  padding: 1.5px;
+  background: conic-gradient(from var(--orca-angle), transparent 0 55%, var(--orca-accent, var(--status-dispatched)) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: orca-alive 2.6s linear infinite;
+}
+.orca-spotlight {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+  background: radial-gradient(180px circle at var(--spot-x, 50%) var(--spot-y, 50%),
+    color-mix(in oklch, var(--foreground) calc(var(--spotlight-strength) * 100%), transparent), transparent 70%);
+}
+*:hover > .orca-spotlight { opacity: 1; }
+.orca-shimmer-text {
+  background: linear-gradient(90deg, var(--muted-foreground) 30%, var(--foreground) 50%, var(--muted-foreground) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: orca-shimmer 1.8s linear infinite;
+}
+
+/* ─────────── xyflow ─────────── */
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-background-pattern-color: color-mix(in oklch, var(--muted-foreground) 26%, transparent);
+  --xy-controls-button-background-color: var(--panel-solid);
+  --xy-controls-button-background-color-hover: var(--accent);
+  --xy-controls-button-color: var(--foreground);
+  --xy-controls-button-border-color: var(--panel-border);
+  --xy-minimap-background-color: var(--panel-solid);
+  --xy-minimap-mask-background-color: color-mix(in oklch, var(--field) 70%, transparent);
+  --xy-edge-stroke: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
+  --xy-edge-stroke-width: 1.5;
+}
+.react-flow__controls {
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--lift-2);
+  overflow: hidden;
+}
+.react-flow__controls-button { width: 26px; height: 26px; border-bottom-color: var(--panel-border); }
+.react-flow__controls-button svg { fill: currentColor; }
+.react-flow__minimap { border-radius: 14px; border: 1px solid var(--panel-border); box-shadow: var(--lift-2); overflow: hidden; }
+.react-flow__attribution { display: none; }
+.react-flow__node { cursor: pointer; }
+
+/* Thin scrollbars (webkit) */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 9999px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

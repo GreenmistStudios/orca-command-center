@@ -1,0 +1,139 @@
+import { parseArgs } from 'node:util'
+
+export class CliError extends Error {
+  override name = 'CliError'
+}
+
+export interface CliOptions {
+  port: number
+  host: string
+  windowHours: number
+  pollMs: number
+  orcaPollMs: number
+  opencodeDb: string | null
+  orcaDir: string | null
+  copilotDir: string | null
+  orcaCli: string | null
+  noOpencode: boolean
+  noCopilot: boolean
+  noOrcaCli: boolean
+  noOrchestration: boolean
+  noHooks: boolean
+  mcpServers: string[]
+  ringSize: number
+  noOpen: boolean
+  dev: boolean
+  verbose: boolean
+}
+
+export const USAGE = `occ — Orca Command Center (read-only dashboard for agent fleets)
+
+Usage: occ [options]
+
+  --port <n>             HTTP port (default 4270; error if in use)
+  --host <h>             Bind address (default 127.0.0.1; non-loopback has NO authentication)
+  --window-hours <n>     Sessions window, 1-720 (default 24)
+  --poll-ms <n>          SQLite change poll, 100-60000 (default 750)
+  --orca-poll-ms <n>     Orca CLI poll, 1000-600000 (default 5000)
+  --opencode-db <path>   Explicit opencode.db (error if unreadable)
+  --orca-dir <path>      Explicit Orca userData dir (error if unreadable)
+  --copilot-dir <path>   Explicit Copilot dir (error if unreadable)
+  --orca-cli <path>      Explicit orca executable
+  --no-opencode          Disable the OpenCode source
+  --no-copilot           Disable the Copilot CLI source
+  --no-orca-cli          Disable the Orca CLI source
+  --no-orchestration     Disable orchestration.db
+  --no-hooks             Disable Orca agent hooks
+  --mcp-servers <a,b>    Extra known MCP server names
+  --ring-size <n>        Activity ring size, 1000-200000 (default 20000)
+  --no-open              Do not open a browser
+  --dev                  Dev mode (client served by Vite)
+  --verbose              Debug logging
+  --version              Print version
+  --help                 Print this help
+
+Data sources (read-only): OpenCode opencode.db, Copilot CLI ~/.copilot/session-state,
+Orca orchestration.db + agent-hooks/last-status.json, and the \`orca\` CLI (status/ps/list).
+`
+
+function int(flag: string, raw: string | undefined, def: number, min: number, max: number): number {
+  if (raw === undefined) return def
+  if (!/^\d+$/.test(raw.trim())) throw new CliError(`--${flag} must be an integer between ${min} and ${max} (got "${raw}")`)
+  const n = Number(raw)
+  if (n < min || n > max) throw new CliError(`--${flag} must be between ${min} and ${max} (got ${n})`)
+  return n
+}
+
+export function parseCli(argv: string[]): CliOptions | { help: true } | { version: true } {
+  let values: Record<string, string | boolean | undefined>
+  try {
+    values = parseArgs({
+      args: argv,
+      strict: true,
+      allowPositionals: false,
+      options: {
+        port: { type: 'string' },
+        host: { type: 'string' },
+        'window-hours': { type: 'string' },
+        'poll-ms': { type: 'string' },
+        'orca-poll-ms': { type: 'string' },
+        'opencode-db': { type: 'string' },
+        'orca-dir': { type: 'string' },
+        'copilot-dir': { type: 'string' },
+        'orca-cli': { type: 'string' },
+        'no-opencode': { type: 'boolean' },
+        'no-copilot': { type: 'boolean' },
+        'no-orca-cli': { type: 'boolean' },
+        'no-orchestration': { type: 'boolean' },
+        'no-hooks': { type: 'boolean' },
+        'mcp-servers': { type: 'string' },
+        'ring-size': { type: 'string' },
+        'no-open': { type: 'boolean' },
+        dev: { type: 'boolean' },
+        verbose: { type: 'boolean' },
+        version: { type: 'boolean' },
+        help: { type: 'boolean' },
+      },
+    }).values
+  } catch (e) {
+    throw new CliError(e instanceof Error ? e.message.split('\n')[0]! : String(e))
+  }
+  if (values.help) return { help: true }
+  if (values.version) return { version: true }
+  const str = (k: string): string | null => {
+    const v = values[k]
+    if (typeof v !== 'string') return null
+    if (v.trim() === '') throw new CliError(`--${k} must not be empty`)
+    return v
+  }
+  const host = str('host') ?? '127.0.0.1'
+  return {
+    port: int('port', values.port as string | undefined, 4270, 1, 65535),
+    host,
+    windowHours: int('window-hours', values['window-hours'] as string | undefined, 24, 1, 720),
+    pollMs: int('poll-ms', values['poll-ms'] as string | undefined, 750, 100, 60_000),
+    orcaPollMs: int('orca-poll-ms', values['orca-poll-ms'] as string | undefined, 5000, 1000, 600_000),
+    opencodeDb: str('opencode-db'),
+    orcaDir: str('orca-dir'),
+    copilotDir: str('copilot-dir'),
+    orcaCli: str('orca-cli'),
+    noOpencode: !!values['no-opencode'],
+    noCopilot: !!values['no-copilot'],
+    noOrcaCli: !!values['no-orca-cli'],
+    noOrchestration: !!values['no-orchestration'],
+    noHooks: !!values['no-hooks'],
+    mcpServers: (str('mcp-servers') ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+    ringSize: int('ring-size', values['ring-size'] as string | undefined, 20_000, 1000, 200_000),
+    noOpen: !!values['no-open'],
+    dev: !!values.dev,
+    verbose: !!values.verbose,
+  }
+}
+
+export function isLoopbackHost(host: string): boolean {
+  const h = host.toLowerCase()
+  return h === 'localhost' || h === '::1' || h === '[::1]' || h.startsWith('127.')
+}
