@@ -77,7 +77,22 @@ describe('Usage tab', () => {
     })
     await waitFor(() => expect(document.querySelector('[data-call="live-1"]')).toBeTruthy(), { timeout: 2000 })
     expect(document.querySelectorAll('[data-call]').length).toBeGreaterThanOrEqual(before)
-    expect(screen.getByTestId('inflight-row')).toBeTruthy()
+    expect(await screen.findByTestId('inflight-row', {}, { timeout: 2000 })).toBeTruthy()
+  })
+
+  it('morphs an in-flight row to its metered value when the call completes, then removes it', async () => {
+    await openUsage(MOCK_IDS.rootBuild)
+    await waitFor(() => expect(screen.getByTestId('calls-table')).toBeTruthy())
+    const reports = useOcc.getState().usageReports
+    const rep = reports[Object.keys(reports).find((k) => k.startsWith('session:'))!]!.data!
+    const est = { sessionId: MOCK_IDS.rootBuild, rootId: MOCK_IDS.rootBuild, harness: 'opencode', startedAt: Date.now(), updatedAt: Date.now(), estOutputTokens: 1200, inFlight: true }
+    act(() => { useOcc.getState().applyStreamEvent({ type: 'usage', seq: useOcc.getState().seq + 1, samples: [], estimates: [est] } as never) })
+    const row = await screen.findByTestId('inflight-row', {}, { timeout: 2000 })
+    expect(row.querySelector('[data-inflight="streaming"]')).toBeTruthy()
+    const x: UsageSample = { ...sample(98, 4000), id: 'live-2', sessionId: MOCK_IDS.rootBuild, rootId: MOCK_IDS.rootBuild, ledgerSeq: rep.ledgerSeq + 5, ts: Date.now() + 100, tokens: { input: 4000, output: 1234, reasoning: 0, cacheRead: 0, cacheWrite: 0 } }
+    act(() => { useOcc.getState().applyStreamEvent({ type: 'usage', seq: useOcc.getState().seq + 1, samples: [x], estimates: [{ ...est, inFlight: false }] } as never) })
+    await waitFor(() => expect(screen.getByTestId('inflight-row').querySelector('[data-inflight="metered"]')).toBeTruthy(), { timeout: 2000 })
+    await waitFor(() => expect(screen.queryByTestId('inflight-row')).toBeNull(), { timeout: 4000 })
   })
 
   it('workflow segment lists subagent bars and selects a session', async () => {

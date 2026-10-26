@@ -86,3 +86,26 @@ describe('ParticleEngine', () => {
     e.destroy()
   })
 })
+
+describe('path identity', () => {
+  it('reordering paths keeps particles on their own path; removed paths kill theirs', () => {
+    const { e } = make()
+    const b = { id: 'q', points: [[0, 0], [10, 0]] as Array<[number, number]>, color: '#f00', width: 4 }
+    e.setPaths([path, b])
+    e.setRate('p', 100); e.burst('p', 100); e.step(16)
+    const before = e.stats().active
+    expect(before).toBeGreaterThan(0)
+    e.setPaths([b, path])
+    expect(e.stats().active).toBe(before)
+    e.setPaths([b])
+    expect(e.stats().active).toBe(0)
+  })
+  it('isAnimating reflects running state', () => {
+    const { e } = make()
+    expect(e.isAnimating()).toBe(false)
+    e.start()
+    expect(e.isAnimating()).toBe(true)
+    e.stop()
+    expect(e.isAnimating()).toBe(false)
+  })
+})

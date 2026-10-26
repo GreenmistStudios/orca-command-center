@@ -24,9 +24,9 @@ describe('Odometer', () => {
     [0.834, 'percent', '83 percent', '83%'],
   ] as const)('%s %s', (v, f, aria, text) => {
     const { container } = render(<Odometer value={v} format={f} />)
-    const el = container.querySelector('[data-odometer]')!
-    expect(el).toHaveAttribute('aria-label', aria)
-    expect(el.textContent).toContain(text)
+    const el = screen.getByRole('img', { name: aria })
+    expect(el).toHaveAttribute('data-odometer')
+    expect(container.querySelector('.flow-sr-only')).toBeNull()
     expect(formatFlowValue(v, f).text).toBe(text)
   })
   it('rolls digit columns with aria-hidden digits', () => {

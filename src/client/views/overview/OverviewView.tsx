@@ -4,7 +4,7 @@ import type { FleetStats, SessionSummary } from '../../../shared/contract'
 import { cn } from '../../lib/cn'
 import { formatCost, formatCount, formatTokens, shortModel } from '../../lib/format'
 import { useOcc } from '../../state/store'
-import { Odometer } from '../../ui/flow'
+import { CostDisclaimer, Odometer } from '../../ui/flow'
 import { Duration, EmptyState, HarnessTile, Panel, SectionLabel, StateDot, ToolBadge, kindColorVar } from '../../ui'
 import { Histogram, Sparkline } from './Histogram'
 
@@ -40,10 +40,10 @@ export function OverviewView() {
 
 /* ───────────── KPIs ───────────── */
 
-function Kpi({ label, value, sub, spark, testid, title }: { label: string; value: ReactNode; sub?: ReactNode; spark?: ReactNode; testid: string; title?: string }) {
+function Kpi({ label, value, sub, spark, testid, title, info }: { info?: ReactNode; label: string; value: ReactNode; sub?: ReactNode; spark?: ReactNode; testid: string; title?: string }) {
   return (
     <div data-testid={testid} title={title} className="bg-panel-solid border-panel-border flex min-w-0 flex-col gap-0.5 rounded-xl border px-3 py-2.5">
-      <span className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">{label}</span>
+      <span className="text-muted-foreground flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide">{label}{info}</span>
       <span className="text-xl font-semibold tabular-nums" data-testid={`${testid}-value`}>{value}</span>
       <span className="text-muted-foreground truncate text-[11px]">{sub}</span>
       {spark}
@@ -81,10 +81,10 @@ function Kpis({ stats }: { stats: FleetStats }) {
         <Kpi testid="kpi-tokens" label="Tokens" value={formatTokens(total)} sub={`${formatTokens(t.input)} in · ${formatTokens(t.output)} out`} spark={link} title={`Input ${t.input.toLocaleString()} · Output ${t.output.toLocaleString()} · Reasoning ${t.reasoning.toLocaleString()} · Cache read ${t.cacheRead.toLocaleString()} · Cache write ${t.cacheWrite.toLocaleString()}`} />
       )}
       {u ? (
-        <Kpi testid="kpi-cost" label="Cost" value={u.costedCalls > 0 ? <Odometer value={u.cost} format="cost" size="lg" /> : 'not reported'}
+        <Kpi testid="kpi-cost" label="Cost" info={<CostDisclaimer />} value={u.costedCalls > 0 ? <Odometer value={u.cost} format="cost" size="lg" /> : 'not reported'}
           sub={<span data-testid="kpi-cost-lifetime">lifetime of sessions active in window: {formatCost(stats.cost)}</span>} />
       ) : (
-        <Kpi testid="kpi-cost" label="Cost" value={formatCost(stats.cost)} sub={`${ss.total} sessions`} />
+        <Kpi testid="kpi-cost" label="Cost" info={<CostDisclaimer />} value={formatCost(stats.cost)} sub={`${ss.total} sessions`} />
       )}
     </div>
   )

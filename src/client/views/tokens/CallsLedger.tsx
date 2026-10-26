@@ -1,22 +1,24 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { motion } from 'motion/react'
 import { memo, useRef } from 'react'
-import type { SessionSummary, UsageEstimate, UsageSample } from '../../../shared/contract'
+import type { SessionSummary, UsageSample, UsageScope } from '../../../shared/contract'
 import { throughputTps } from '../../../shared/usage-math'
 import { cn } from '../../lib/cn'
 import { formatClock, formatCost, formatTokens, shortModel } from '../../lib/format'
 import { AgentMonogram, SectionLabel } from '../../ui'
-import { InFlightMeter, useFlowMotion } from '../../ui/flow'
+import { useInFlightMeters } from '../../state/usage-live'
+import { CostDisclaimer, InFlightMeter, useFlowMotion } from '../../ui/flow'
 import { formatMs } from './model'
 
 export const VIRTUALIZE_AFTER = 60
 const ROW_H = 28
+const SEEN_CAP = 500
 const COLS = 'grid-cols-[64px_minmax(120px,1.4fr)_28px_minmax(90px,1fr)_repeat(5,64px)_64px_64px]'
 const HEADERS = ['Time', 'Session', '', 'Model', 'Fresh in', 'Cache rd', 'Cache wr', 'Out', 'Reason', 'Cost', 'TTFT', 'tok/s']
 
 export interface CallsLedgerProps {
   calls: UsageSample[]
-  inFlight: UsageEstimate[]
+  scope: UsageScope
   sessions: Record<string, SessionSummary>
   hasMore: boolean
   loading: boolean
@@ -51,8 +53,9 @@ const CallRow = memo(function CallRow({ c, title, animate, onSelect }: { c: Usag
   )
 })
 
-export const CallsLedger = memo(function CallsLedger({ calls, inFlight, sessions, hasMore, loading, onLoadOlder, onSelectSession }: CallsLedgerProps) {
+export const CallsLedger = memo(function CallsLedger({ calls, scope, sessions, hasMore, loading, onLoadOlder, onSelectSession }: CallsLedgerProps) {
   const { reduced } = useFlowMotion()
+  const inFlight = useInFlightMeters(scope)
   const scrollRef = useRef<HTMLDivElement>(null)
   const seen = useRef<Set<string> | null>(null)
   const virtual = calls.length > VIRTUALIZE_AFTER
@@ -60,7 +63,12 @@ export const CallsLedger = memo(function CallsLedger({ calls, inFlight, sessions
   // Rows present on first paint don't animate; later arrivals do.
   const fresh = new Set<string>()
   if (seen.current === null) seen.current = new Set(calls.map((c) => c.id))
-  else for (const c of calls) if (!seen.current.has(c.id)) { fresh.add(c.id); seen.current.add(c.id) }
+  else {
+    const s = seen.current
+    for (const c of calls) if (!s.has(c.id)) { fresh.add(c.id); s.add(c.id) }
+    // Bounded: keep only the most recent ids (Set preserves insertion order).
+    for (const id of s) { if (s.size <= SEEN_CAP) break; s.delete(id) }
+  }
 
   const virtualizer = useVirtualizer({
     count: virtual ? calls.length : 0, getScrollElement: () => scrollRef.current, estimateSize: () => ROW_H, overscan: 12,
@@ -73,13 +81,13 @@ export const CallsLedger = memo(function CallsLedger({ calls, inFlight, sessions
       <div className="overflow-x-auto">
         <div role="table" aria-label="Metered calls" aria-rowcount={calls.length + inFlight.length} className="min-w-[900px]">
           <div role="row" className={cn('text-muted-foreground grid items-center gap-2 px-2 pb-1 text-[10px] font-medium tracking-wide uppercase', COLS)}>
-            {HEADERS.map((h, i) => <span key={i} role="columnheader" className={i >= 4 ? 'text-right' : undefined}>{h}</span>)}
+            {HEADERS.map((h, i) => <span key={i} role="columnheader" className={i >= 4 ? 'text-right' : undefined}>{h}{h === 'Cost' && <CostDisclaimer />}</span>)}
           </div>
           {inFlight.map((e) => (
-            <div key={`if:${e.sessionId}`} role="row" data-inflight-row={e.sessionId} className={cn('grid h-9 items-center gap-2 px-2 text-[11px]', COLS)}>
+            <div key={`if:${e.sessionId}`} role="row" data-inflight-row={e.sessionId} data-done={e.done || undefined} className={cn('grid h-9 items-center gap-2 px-2 text-[11px]', COLS)}>
               <span role="cell" className="text-muted-foreground">now</span>
               <span role="cell" className="min-w-0"><button type="button" onClick={() => onSelectSession(e.sessionId)} className="text-muted-foreground hover:text-foreground focus-ring block max-w-full truncate text-left hover:underline">{titleOf(e.sessionId)}</button></span>
-              <span role="cell" className="col-span-10"><InFlightMeter estTokens={e.estOutputTokens} startedAt={e.startedAt} /></span>
+              <span role="cell" className="col-span-10"><InFlightMeter estTokens={e.estTokens} startedAt={e.startedAt} metered={e.metered} /></span>
             </div>
           ))}
           {virtual ? (

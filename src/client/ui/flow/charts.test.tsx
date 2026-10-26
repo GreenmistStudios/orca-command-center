@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UsageBucket, UsageSankey } from '../../../shared/contract'
 import { MirroredStreamChart } from './MirroredStreamChart'
 import { setFlowReducedOverride } from './motion'
+import { frameSubscriberCount } from './frame'
 import { SankeyChart } from './SankeyChart'
 import { layoutSankey } from './sankey-layout'
 import { stubCanvas, stubRaf } from './testutil'
@@ -88,6 +89,29 @@ describe('SankeyChart', () => {
   })
 })
 
+describe('SankeyChart interactivity and animating', () => {
+  it('only middle nodes are buttons by default; custom predicate overrides', () => {
+    stubCanvas()
+    const { container, rerender } = render(<SankeyChart sankey={sankey} scale="linear" units="tokens" onNodeClick={() => {}} />)
+    expect(screen.getAllByRole('button')).toHaveLength(1)
+    expect(container.querySelector('[data-node="s:input"]')).toHaveAttribute('role', 'img')
+    expect(container.querySelector('[data-node="s:input"]')).not.toHaveAttribute('tabindex')
+    rerender(<SankeyChart sankey={sankey} scale="linear" units="tokens" />)
+    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    rerender(<SankeyChart sankey={sankey} scale="linear" units="tokens" onNodeClick={() => {}} isNodeInteractive={(n) => n.column === 0} />)
+    expect(screen.getAllByRole('button')).toHaveLength(2)
+  })
+  it('data-animating true normally, false when reduced', () => {
+    stubCanvas()
+    const { container, unmount } = render(<SankeyChart sankey={sankey} scale="linear" units="tokens" />)
+    expect(container.querySelector('[data-particles]')).toHaveAttribute('data-animating', 'true')
+    unmount()
+    setFlowReducedOverride(true)
+    const r = render(<SankeyChart sankey={sankey} scale="linear" units="tokens" />)
+    expect(r.container.querySelector('[data-particles]')).toHaveAttribute('data-animating', 'false')
+  })
+})
+
 describe('MirroredStreamChart', () => {
   const buckets: UsageBucket[] = Array.from({ length: 10 }, (_, i) => ({ t: i * 1000, input: 10 + i, cacheRead: 5, cacheWrite: 1, output: 8, reasoning: 2, cost: 0.1, aiu: 0, calls: 1 }))
   it('renders, draws on the canvas and shows a tooltip + brush callback', () => {
@@ -113,5 +137,36 @@ describe('MirroredStreamChart', () => {
     const { container, unmount } = render(<MirroredStreamChart buckets={buckets} bucketMs={1000} domain="live" units="cost" />)
     expect(container.querySelector('[data-now-line]')).not.toBeNull()
     unmount()
+  })
+  it('live: animating true, subscribes once across data updates', () => {
+    stubCanvas()
+    const base = frameSubscriberCount()
+    const { container, rerender, unmount } = render(<MirroredStreamChart buckets={buckets} bucketMs={1000} domain="live" units="cost" />)
+    expect(container.querySelector('[data-stream-canvas]')).toHaveAttribute('data-animating', 'true')
+    expect(frameSubscriberCount()).toBe(base + 1)
+    rerender(<MirroredStreamChart buckets={[...buckets]} bucketMs={1000} domain="live" units="cost" />)
+    rerender(<MirroredStreamChart buckets={[...buckets]} bucketMs={1000} domain="live" units="cost" />)
+    expect(frameSubscriberCount()).toBe(base + 1)
+    unmount()
+    expect(frameSubscriberCount()).toBe(base)
+  })
+  it('reduced live: no frame subscription, 1 s interval redraw, not animating', () => {
+    vi.useFakeTimers()
+    const c = stubCanvas()
+    setFlowReducedOverride(true)
+    const base = frameSubscriberCount()
+    const { container, unmount } = render(<MirroredStreamChart buckets={buckets} bucketMs={1000} domain="live" units="cost" />)
+    expect(frameSubscriberCount()).toBe(base)
+    expect(container.querySelector('[data-stream-canvas]')).toHaveAttribute('data-animating', 'false')
+    const n = c.calls.length
+    act(() => { vi.advanceTimersByTime(2100) })
+    expect(c.calls.length).toBeGreaterThan(n)
+    unmount()
+    vi.useRealTimers()
+  })
+  it('static domain after easing is not animating', () => {
+    stubCanvas()
+    const { container } = render(<MirroredStreamChart buckets={buckets} bucketMs={1000} domain={[0, 10_000]} units="tokens" />)
+    expect(container.querySelector('[data-stream-canvas]')).toHaveAttribute('data-animating', 'false')
   })
 })

@@ -92,6 +92,7 @@ export class ParticleEngine {
 
   setPaths(paths: ParticlePath[]): void {
     const old = new Map(this.paths.map((p) => [p.id, p]))
+    const oldIds = this.paths.map((p) => p.id)
     this.paths = paths.map((p) => {
       const n = p.points.length
       const pts = new Float32Array(n * 2)
@@ -105,8 +106,14 @@ export class ParticleEngine {
       return { id: p.id, color: p.color, size: Math.min(3, Math.max(2, (p.width ?? 3) / 2)), pts, cum, len: n ? cum[n - 1] : 0, rate: prev?.rate ?? 0, acc: prev?.acc ?? 0 }
     })
     this.index = new Map(this.paths.map((p, i) => [p.id, i]))
-    // Drop particles whose path vanished or whose index moved out of range.
-    for (let i = 0; i < this.max; i++) if (this.alive[i] && this.pathIdx[i] >= this.paths.length) this.kill(i)
+    // Remap in-flight particles by path id; kill those whose path vanished.
+    for (let i = 0; i < this.max; i++) {
+      if (!this.alive[i]) continue
+      const id = oldIds[this.pathIdx[i]]
+      const ni = id === undefined ? undefined : this.index.get(id)
+      if (ni === undefined) this.kill(i)
+      else this.pathIdx[i] = ni
+    }
   }
 
   /** Set the sustained spawn rate from tokens/s (mapped through `spawnRate`). */
@@ -150,6 +157,11 @@ export class ParticleEngine {
     this.paths = []
     this.index.clear()
     this.clear()
+  }
+
+  /** True only while the engine is subscribed, not reduced, has paths and the document is visible. */
+  isAnimating(): boolean {
+    return this.unsub !== null && !this.reduced && this.paths.length > 0 && !(typeof document !== 'undefined' && document.hidden)
   }
 
   stats(): ParticleStats {

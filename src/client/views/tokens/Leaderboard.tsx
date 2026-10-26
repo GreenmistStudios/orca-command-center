@@ -3,7 +3,7 @@ import { memo, useMemo } from 'react'
 import type { SessionSummary, UsageReport } from '../../../shared/contract'
 import { formatCost, formatTokens } from '../../lib/format'
 import { AgentMonogram, SectionLabel, TabList } from '../../ui'
-import { AnimatedBarList, type BarRow } from '../../ui/flow'
+import { AnimatedBarList, CostDisclaimer, type BarRow } from '../../ui/flow'
 import { buildBoardRows, type BoardFilter, type BoardTab } from './model'
 
 export interface LeaderboardProps {
@@ -40,7 +40,7 @@ export const Leaderboard = memo(function Leaderboard({ report, units, tab, filte
   return (
     <section className="panel bg-panel-solid flex min-w-0 flex-col gap-2 p-3" aria-label="Leaderboard" data-testid="tokens-leaderboard">
       <div className="flex items-center justify-between gap-2">
-        <SectionLabel>LEADERBOARD</SectionLabel>
+        <span className="flex items-center gap-1"><SectionLabel>LEADERBOARD</SectionLabel>{units === 'cost' && <CostDisclaimer />}</span>
         <TabList<BoardTab>
           aria-label="Leaderboard grouping" idPrefix="tokboard" value={tab} onChange={onTab}
           tabs={[{ value: 'agent', label: 'Agents' }, { value: 'model', label: 'Models' }, { value: 'session', label: 'Sessions' }]}

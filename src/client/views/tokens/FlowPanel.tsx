@@ -19,6 +19,8 @@ export interface FlowPanelProps {
 }
 
 /** Sankey with per-link EWMA rates (kept in a ref, published at 2 Hz) and a burst per in-scope call. */
+const isMiddleNode = (n: SankeyNode): boolean => n.kind === 'middle' && n.id !== 'mid:other'
+
 export const FlowPanel = memo(function FlowPanel({ report, scope, windowMs, units, scale, selectedNodeId, onNodeClick }: FlowPanelProps) {
   const tracker = useRef(new RateTracker())
   const sankeyRef = useRef(report.sankey)
@@ -73,7 +75,7 @@ export const FlowPanel = memo(function FlowPanel({ report, scope, windowMs, unit
       <p className="sr-only" data-testid="tokens-flow-summary">{summary}</p>
       <SankeyChart
         sankey={report.sankey} scale={scale} units={units} rates={rates} burstEmitter={emitter}
-        selectedNodeId={selectedNodeId} onNodeClick={onNodeClick} height={320}
+        selectedNodeId={selectedNodeId} onNodeClick={onNodeClick} isNodeInteractive={isMiddleNode} height={320}
       />
     </section>
   )

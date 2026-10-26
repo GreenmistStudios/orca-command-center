@@ -57,6 +57,8 @@ export function MirroredStreamChart({ buckets, bucketMs, domain, spanMs = 5 * 60
   }, [buckets])
 
   const yMax = useMemo(() => symmetricMax(buckets, units), [buckets, units])
+  const yMaxRef = useRef(yMax)
+  yMaxRef.current = yMax
 
   const currentDomain = useCallback((now: number): [number, number] => {
     const s = state.current
@@ -80,7 +82,7 @@ export function MirroredStreamChart({ buckets, bucketMs, domain, spanMs = 5 * 60
     const x = scaleLinear(dom, [0, s.width])
     const mid = PAD_TOP + (s.height - PAD_TOP - PAD_BOTTOM) / 2
     const half = (s.height - PAD_TOP - PAD_BOTTOM) / 2
-    const norm = yValue(yMax, s.balanced) || 1
+    const norm = yValue(yMaxRef.current, s.balanced) || 1
     const py = (v: number) => (yValue(v, s.balanced) / norm) * half
     let easing = false
     for (const b of s.buckets) {
@@ -110,24 +112,43 @@ export function MirroredStreamChart({ buckets, bucketMs, domain, spanMs = 5 * 60
       g.setAttribute('transform', `translate(${dx.toFixed(2)} 0)`)
     }
     return easing
-  }, [currentDomain, yMax])
+  }, [currentDomain])
 
-  // redraw on data/size changes; run the shared loop while live or easing
+  // Loop controller: subscribes once per mount (and on `reduced`/`live` changes); props are read from refs.
+  const ctl = useRef<{ redraw(): void } | null>(null)
+  const setAnimating = useCallback((v: boolean) => {
+    canvasRef.current?.setAttribute('data-animating', v ? 'true' : 'false')
+  }, [])
   useEffect(() => {
     let unsub: (() => void) | null = null
-    let lastDraw = 0
+    let timer: ReturnType<typeof setInterval> | null = null
+    const visible = () => typeof document === 'undefined' || !document.hidden
     const stop = () => { unsub?.(); unsub = null }
-    const loop = (now: number) => {
-      const ts = Date.now()
-      if (state.current.reduced && ts - lastDraw < 1000) return
-      lastDraw = ts
-      const easing = draw(ts)
-      if (!live && !easing) stop()
+    const paint = () => {
+      const easing = draw(Date.now())
+      const has = state.current.buckets.length > 0
+      if (reduced) { setAnimating(false); return }
+      if (!live && !easing) { stop(); setAnimating(false); return }
+      if (!unsub) unsub = subscribeFrame(() => paint())
+      setAnimating(visible() && has)
     }
-    const easing = draw(Date.now())
-    if (live || easing) unsub = subscribeFrame((now) => loop(now))
-    return stop
-  }, [draw, live, buckets, width, height, units, balanced, reduced, domain])
+    if (reduced) timer = setInterval(() => { draw(Date.now()) }, 1000)
+    const onVis = () => { if (!reduced) setAnimating(visible() && state.current.buckets.length > 0 && unsub !== null) }
+    document.addEventListener('visibilitychange', onVis)
+    ctl.current = { redraw: paint }
+    paint()
+    return () => {
+      stop()
+      if (timer) clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVis)
+      ctl.current = null
+    }
+  }, [draw, live, reduced, setAnimating])
+
+  // redraw on data/size changes without re-subscribing
+  const domFrom = Array.isArray(domain) ? domain[0] : 0
+  const domTo = Array.isArray(domain) ? domain[1] : 0
+  useEffect(() => { ctl.current?.redraw() }, [buckets, yMax, width, height, units, balanced, domFrom, domTo, spanMs, bucketMs])
 
   // refresh tick labels ~1 Hz in live mode (positions slide imperatively in between)
   useEffect(() => {

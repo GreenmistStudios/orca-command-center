@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useOcc } from '../../state/store'
 import { Button, EmptyState, Spinner, toneClasses } from '../../ui'
 import { cn } from '../../lib/cn'
+import { costDisplay } from './cost-display'
 import { OverlayToggle, WorkflowPill } from './FlowOverlay'
 import { edgeFlowFor, nodeShares, workflowBurn } from './overlay'
 import { elkLayout } from './layout'
@@ -133,7 +134,7 @@ function DagCanvas({ layout }: { layout: LayoutFn }) {
         if (overlay) {
           const sid = sessionOf(t.id, t.latestDispatchId)
           const sess = sid ? sessions[sid] : undefined
-          if (sess?.usage) data.cost = sess.cost ?? 0
+          if (sess?.usage) data.cost = costDisplay(sess, false)
         }
         nodes.push({
           id: t.id, type: 'task', position: pos[t.id], data, width: TASK_SIZE.w, height: TASK_SIZE.h,
@@ -231,7 +232,7 @@ function DagCanvas({ layout }: { layout: LayoutFn }) {
           {showPill && wfTree && (
             <WorkflowPill tree={wfTree} burn={burn} onOpen={() => { setTokensPrefs({ scope: 'workflow' }); setView('tokens') }} />
           )}
-          {caption && !showPill && <div data-testid="dag-caption" className={cn(pill, 'absolute top-12 left-1/2 z-10 max-w-[80%] -translate-x-1/2 truncate')}>{caption}</div>}
+          {caption && <div data-testid="dag-caption" className={cn(pill, 'absolute top-12 left-1/2 z-10 max-w-[80%] -translate-x-1/2 truncate')}>{caption}</div>}
           <div className={cn(pill, 'absolute bottom-3 left-1/2 z-10 -translate-x-1/2')}>fill = state · stripe = agent</div>
         </>
       )}

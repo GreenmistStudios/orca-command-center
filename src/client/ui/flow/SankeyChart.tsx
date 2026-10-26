@@ -24,6 +24,8 @@ export interface SankeyChartProps {
   burstEmitter?: BurstEmitter
   selectedNodeId?: string | null
   onNodeClick?(node: SankeyNode): void
+  /** Which nodes are clickable/focusable. Default: middle column (`column === 1`) when `onNodeClick` is set, else none. */
+  isNodeInteractive?(node: SankeyNode): boolean
   /** Chart height in px (default 360). */
   height?: number
   className?: string
@@ -45,7 +47,7 @@ function clip(s: string, max: number): string {
 }
 
 /** Animated 3-column Sankey (sources → agents/sessions/models → sinks) with a particle overlay. */
-export function SankeyChart({ sankey, scale, units, rates, burstEmitter, selectedNodeId, onNodeClick, height = 360, className }: SankeyChartProps) {
+export function SankeyChart({ sankey, scale, units, rates, burstEmitter, selectedNodeId, onNodeClick, isNodeInteractive, height = 360, className }: SankeyChartProps) {
   const [ref, size] = useElementSize<HTMLDivElement>()
   const { reduced } = useFlowMotion()
   const width = size.width > 0 ? size.width : FALLBACK_WIDTH
@@ -88,6 +90,15 @@ export function SankeyChart({ sankey, scale, units, rates, burstEmitter, selecte
     return burstEmitter.subscribe((id, tokens) => engineRef.current?.burst(id, tokens))
   }, [burstEmitter, reduced])
 
+  const [visible, setVisible] = useState(() => typeof document === 'undefined' || !document.hidden)
+  useEffect(() => {
+    const on = () => setVisible(!document.hidden)
+    document.addEventListener('visibilitychange', on)
+    return () => document.removeEventListener('visibilitychange', on)
+  }, [])
+  const animating = !reduced && visible && layout.links.length > 0
+
+  const interactiveOf = (n: SankeyNode): boolean => (onNodeClick ? (isNodeInteractive ? isNodeInteractive(n) : n.column === 1) : false)
   const active = hoverNode ?? null
   const linkOpacity = (id: string, source: string, target: string): number => {
     if (hoverLink) return hoverLink === id ? 0.55 : 0.12
@@ -96,6 +107,7 @@ export function SankeyChart({ sankey, scale, units, rates, burstEmitter, selecte
   }
 
   const onKey = (e: KeyboardEvent, n: LayoutNode) => {
+    if (!interactiveOf(n.node)) return
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNodeClick?.(n.node) }
   }
 
@@ -129,17 +141,19 @@ export function SankeyChart({ sankey, scale, units, rates, burstEmitter, selecte
             const selected = selectedNodeId === n.id
             const compact = h < 30
             const maxChars = Math.floor((cardW - 14) / 6)
+            const interactive = interactiveOf(n.node)
+            const label = `${n.node.label}: ${units === 'cost' ? formatCost(n.value) : `${formatCount(Math.round(n.value))} tokens`}`
             return (
               <g
                 key={n.id}
                 data-node={n.id}
-                role="button"
-                tabIndex={0}
-                aria-pressed={selected}
-                aria-label={`${n.node.label}: ${units === 'cost' ? formatCost(n.value) : `${formatCount(Math.round(n.value))} tokens`}`}
-                className="cursor-pointer outline-none focus-visible:[&>rect:first-child]:stroke-[var(--ring)]"
-                onClick={() => onNodeClick?.(n.node)}
-                onKeyDown={(e) => onKey(e, n)}
+                {...(interactive
+                  ? { role: 'button', tabIndex: 0, 'aria-pressed': selected }
+                  : { role: 'img' })}
+                aria-label={label}
+                className={interactive ? 'cursor-pointer outline-none focus-visible:[&>rect:first-child]:stroke-[var(--ring)]' : undefined}
+                onClick={interactive ? () => onNodeClick?.(n.node) : undefined}
+                onKeyDown={interactive ? (e) => onKey(e, n) : undefined}
                 onMouseEnter={() => setHoverNode(n.id)}
                 onMouseLeave={() => setHoverNode(null)}
                 onFocus={() => setHoverNode(n.id)}
@@ -169,7 +183,7 @@ export function SankeyChart({ sankey, scale, units, rates, burstEmitter, selecte
           })}
         </g>
       </svg>
-      <canvas ref={canvasRef} className="pointer-events-none absolute inset-0" style={{ width, height }} aria-hidden="true" data-particles />
+      <canvas ref={canvasRef} className="pointer-events-none absolute inset-0" style={{ width, height }} aria-hidden="true" data-particles data-animating={animating ? 'true' : 'false'} />
       <table className="flow-sr-only">
         <caption>Token flow links</caption>
         <thead><tr><th>Source</th><th>Target</th><th>Tokens</th></tr></thead>

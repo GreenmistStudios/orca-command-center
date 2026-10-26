@@ -22,7 +22,7 @@ describe('DagView', () => {
   })
 
   it('renders the agent tree and selects on click', async () => {
-    renderWithMockStore(<DagView layout={layout} />, { uiState: { selectedRootId: MOCK_IDS.rootBuild, selectedSessionId: MOCK_IDS.rootBuild, tokens: { ...useOcc.getState().ui.tokens, overlay: false } } })
+    renderWithMockStore(<DagView layout={layout} />, { uiState: { selectedRootId: MOCK_IDS.rootBuild, selectedSessionId: MOCK_IDS.rootBuild } })
     await waitFor(() => expect(screen.getAllByTestId('session-node')).toHaveLength(7))
     expect(screen.getByTestId('dag-caption').textContent).toContain('6 agents')
     fireEvent.click(screen.getAllByTestId('session-node').find((n) => n.getAttribute('data-session-id') === MOCK_IDS.coderTests)!)
@@ -54,7 +54,7 @@ describe('DagView token-flow overlay', () => {
     expect(screen.getAllByTestId('flow-ring').length).toBeGreaterThan(0)
     expect(screen.getAllByTestId('cost-ticker').length).toBeGreaterThan(0)
     expect(screen.getByTestId('workflow-pill').textContent).toMatch(/burn/)
-    expect(screen.queryByTestId('dag-caption')).toBeNull()
+    expect(screen.getByTestId('dag-caption')).toBeTruthy()
     unmount()
 
     renderWithMockStore(<DagView layout={layout} />, { uiState: { ...ui, tokens: { ...useOcc.getState().ui.tokens, overlay: false } } })

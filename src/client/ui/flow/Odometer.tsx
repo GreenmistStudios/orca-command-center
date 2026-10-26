@@ -44,20 +44,19 @@ export function Odometer({ value, format, className, size = 'md' }: OdometerProp
   const { text, aria } = formatFlowValue(value, format)
   const base = cn('inline-flex items-baseline font-mono tabular-nums', SIZE[size], className)
   if (reduced) {
-    return <span className={base} role="text" aria-label={aria} data-odometer>{text}</span>
+    return <span className={base} role="img" aria-label={aria} data-odometer><span aria-hidden="true">{text}</span></span>
   }
   const chars = splitDisplay(text)
   return (
-    <span className={base} role="text" aria-label={aria} data-odometer>
+    <span className={base} role="img" aria-label={aria} data-odometer>
       <span aria-hidden="true" className="inline-flex items-baseline">
         {chars.map((c, i) => {
           const fromRight = chars.length - i
           return c.digit === null
-            ? <span key={`s${fromRight}`}>{c.ch}</span>
+            ? <span key={`s${fromRight}`} aria-hidden="true">{c.ch}</span>
             : <DigitColumn key={`d${fromRight}`} digit={c.digit} />
         })}
       </span>
-      <span className="flow-sr-only">{text}</span>
     </span>
   )
 }

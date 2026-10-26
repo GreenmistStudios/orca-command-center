@@ -7,7 +7,8 @@ import { formatDuration, formatRelative, shortModel } from '../lib/format'
 import { useNow } from '../hooks/useNow'
 import { selectDescendants, selectWorkspaceGroups, type WorkspaceGroup } from '../state/selectors'
 import { useOcc } from '../state/store'
-import { FLOW_VAR, Odometer, useFlowMotion } from '../ui/flow'
+import { costDisplay, CostOrAiu } from '../views/dag/cost-display'
+import { COST_DISCLAIMER, FLOW_VAR, useFlowMotion } from '../ui/flow'
 import {
   AgentMonogram, EmptyState, HarnessTile, LiveDot, SectionLabel, Segmented, StateDot, StatusPill, Tooltip,
   kindColorVar, stateTone, useSpotlight, STATE_LABEL,
@@ -47,7 +48,7 @@ function RootRow({
     tools != null ? `${tools} tools` : null,
   ].filter(Boolean).join(' · ')
   const tree = s.usage?.tree ?? null
-  const cost = tree?.cost ?? s.cost
+  const cost = costDisplay(s, true)
   const inflow = tree?.inflow ?? s.usage?.inflow ?? 0
   const outflow = tree?.outflow ?? s.usage?.outflow ?? 0
   const share = inflow + outflow > 0 ? inflow / (inflow + outflow) : null
@@ -91,7 +92,7 @@ function RootRow({
         {sub && <span className="text-muted-foreground/80 truncate pl-4 font-mono text-[10.5px]">{sub}</span>}
         <span className="text-muted-foreground flex items-center gap-1 truncate pl-4 text-[11px]">
           <span className="truncate">{meta}{meta ? ' · ' : ''}</span>
-          <span data-testid="rail-cost" className="shrink-0"><Odometer value={cost} format="cost" size="sm" /></span>
+          <span data-testid="rail-cost" className="shrink-0" title={cost.kind === 'cost' ? COST_DISCLAIMER : undefined}><CostOrAiu d={cost} /></span>
         </span>
         {(share != null || streaming) && (
           <span
@@ -155,7 +156,7 @@ function CastRow({ c, selected, now }: { c: SessionSummary; selected: boolean; n
           <span className="text-muted-foreground"> · {c.title}</span>
         </span>
         {(hov || selected) && (
-          <span data-testid="rail-cast-cost" className="text-muted-foreground shrink-0"><Odometer value={c.usage?.tree?.cost ?? c.cost} format="cost" size="sm" /></span>
+          <span data-testid="rail-cast-cost" className="text-muted-foreground shrink-0"><CostOrAiu d={costDisplay(c, true)} /></span>
         )}
         {showState ? (
           <StatusPill tone={stateTone(c.state)} className="absolute right-2 shrink-0 rounded-full px-1.5 py-px text-[10px]">

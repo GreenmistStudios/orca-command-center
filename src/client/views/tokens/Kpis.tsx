@@ -1,7 +1,7 @@
 import { memo, useMemo, useRef, type ReactNode } from 'react'
 import type { FlowKind, UsageReport, UsageSample, UsageScope } from '../../../shared/contract'
 import { formatCost, formatTokens } from '../../lib/format'
-import { useUsageBurst } from '../../state/usage-live'
+import { useInFlightMeters, useUsageBurst } from '../../state/usage-live'
 import {
   CostDisclaimer, DeltaChips, FLOW_VAR, InFlightMeter, KpiTile, RadialGauge,
   type DeltaChipsHandle,
@@ -49,8 +49,12 @@ export const Kpis = memo(function Kpis({ report, scope }: { report: UsageReport;
   const burstTokens = r.inflowPerMin + r.outflowPerMin
   const sparkTokens = useMemo(() => seriesOf(report, (b) => b.input + b.cacheRead + b.cacheWrite + b.output + b.reasoning), [report.series.buckets]) // eslint-disable-line react-hooks/exhaustive-deps
   const sparkCost = useMemo(() => seriesOf(report, (b) => b.cost), [report.series.buckets]) // eslint-disable-line react-hooks/exhaustive-deps
-  const est = report.inFlight.reduce((n, e) => n + e.estOutputTokens, 0)
-  const startedAt = report.inFlight.reduce((m, e) => Math.min(m, e.startedAt), Infinity)
+  const meters = useInFlightMeters(scope)
+  const est = meters.reduce((n, e) => n + e.estTokens, 0)
+  const startedAt = meters.reduce((m, e) => Math.min(m, e.startedAt), Infinity)
+  // Aggregate of live entries; once none stream, briefly show the completed calls' metered total (morph + check).
+  const allDone = meters.length > 0 && meters.every((e) => e.done)
+  const metered = allDone ? meters.reduce((n, e) => n + (e.metered ?? 0), 0) : null
 
   return (
     <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6" data-testid="tokens-kpis">
@@ -63,8 +67,8 @@ export const Kpis = memo(function Kpis({ report, scope }: { report: UsageReport;
       <Region label="Outflow">
         <KpiTile
           label="Outflow" value={t.outflow} format="tokens" chipsRef={outflowChips}
-          sub={report.inFlight.length > 0
-            ? <InFlightMeter estTokens={est} startedAt={startedAt} />
+          sub={meters.length > 0
+            ? <InFlightMeter estTokens={est} startedAt={startedAt} metered={metered} />
             : <span className="flex flex-wrap gap-x-2"><span><Dot flow="output" />output {formatTokens(t.tokens.output)}</span><span><Dot flow="reasoning" />reasoning {formatTokens(t.tokens.reasoning)}</span></span>}
         />
       </Region>

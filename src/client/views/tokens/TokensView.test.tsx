@@ -22,7 +22,7 @@ const sample = (over: Partial<UsageSample> = {}): UsageSample => ({
   tokens: { input: 100, output: 500, reasoning: 50, cacheRead: 9000, cacheWrite: 0 }, cost: 0.05, aiu: null, ttftMs: 800, durationMs: 5000, finish: 'stop', source: 't', ...over,
 })
 const push = (...samples: UsageSample[]) => act(() => { st().applyStreamEvent({ type: 'usage', seq: ++frame, samples, estimates: [] }) })
-const inflowOf = () => Number(within(screen.getByTestId('kpi-inflow')).getByRole('text').getAttribute('aria-label')!.replace(/[^0-9]/g, ''))
+const inflowOf = () => Number(within(screen.getByTestId('kpi-inflow')).getByRole('img', { name: /\d/ }).getAttribute('aria-label')!.replace(/[^0-9]/g, ''))
 const reportKeys = () => Object.keys(st().usageReports)
 
 beforeEach(() => {
@@ -92,6 +92,28 @@ describe('TokensView', () => {
     push(sample())
     await waitFor(() => expect(inflowOf()).toBe(before + 9100), { timeout: 3000 })
     await waitFor(() => expect(within(screen.getByTestId('kpi-inflow')).getAllByText(/^\+9\.1k/).length).toBeGreaterThan(0))
+  })
+
+  it('15m window loads KPIs without an error panel and shows Live for in-scope traffic', async () => {
+    renderWithMockStore(<TokensView />, { uiState: prefs({ scope: 'fleet', windowMs: 900_000 }) })
+    await ready()
+    expect(screen.queryByTestId('tokens-error')).toBeNull()
+    expect(reportKeys().some((k) => k.startsWith('fleet::900000'))).toBe(true)
+    for (const r of ['Inflow', 'Outflow', 'Calls']) expect(screen.getByRole('region', { name: r })).toBeTruthy()
+    push(sample({ sessionId: MOCK_IDS.coderViewModel }))
+    await waitFor(() => expect(screen.getByTestId('tokens-live').getAttribute('data-live')).toBe('true'))
+  })
+
+  it('outflow tile morphs estimate to metered on completion, then reverts to the split', async () => {
+    renderWithMockStore(<TokensView />, { uiState: { selectedSessionId: MOCK_IDS.coderViewModel, selectedRootId: MOCK_IDS.rootBuild } })
+    await ready()
+    const est = { sessionId: MOCK_IDS.coderViewModel, rootId: MOCK_IDS.rootBuild, harness: 'opencode' as const, startedAt: Date.now(), updatedAt: Date.now(), estOutputTokens: 800, inFlight: true }
+    act(() => { st().applyStreamEvent({ type: 'usage', seq: ++frame, samples: [], estimates: [est] }) })
+    const tile = screen.getByTestId('kpi-outflow')
+    await waitFor(() => expect(tile.querySelector('[data-inflight="streaming"]')).toBeTruthy(), { timeout: 3000 })
+    act(() => { st().applyStreamEvent({ type: 'usage', seq: ++frame, samples: [sample({ ts: Date.now() + 50 })], estimates: [{ ...est, inFlight: false }] }) })
+    await waitFor(() => expect(tile.querySelector('[data-inflight="metered"]')).toBeTruthy(), { timeout: 3000 })
+    await waitFor(() => expect(tile.querySelector('[data-inflight]')).toBeNull(), { timeout: 4000 })
   })
 
   it('sankey node click selects the session (middle = sessions)', async () => {
@@ -207,7 +229,7 @@ describe('TokensView', () => {
     await ready()
     const before = commits
     for (let i = 0; i < 50; i++) push(sample({ ts: Date.now() + i }))
-    await waitFor(() => expect(inflowOf()).toBeGreaterThan(0))
+    await waitFor(() => expect(inflowOf()).toBeGreaterThanOrEqual(before + 50 * 9100 * 0.5))
     await new Promise((r) => setTimeout(r, 600))
     expect(commits - before).toBeLessThan(15)
   })

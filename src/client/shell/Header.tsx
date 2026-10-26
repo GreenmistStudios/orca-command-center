@@ -25,14 +25,17 @@ const SOURCE_DOT: Record<SourceStatus, string> = {
 function OrcaPill() {
   const orca = useOcc((s) => s.orca?.status ?? s.meta?.orca ?? null)
   const live = !!orca?.running
+  const checking = !live && !!orca && orca.checkedAt === 0 && !orca.error
+  const unreachable = !live && !!orca?.error
+  const short = (orca?.error ?? '').length > 60 ? `${orca!.error!.slice(0, 57)}…` : (orca?.error ?? '')
   return (
     <StatusPill
       data-testid="orca-pill"
       tone={live ? 'completed' : undefined}
-      icon={<LiveDot live={live} />}
+      icon={checking ? undefined : <LiveDot live={live} />}
       style={live ? { boxShadow: '0 0 16px -6px color-mix(in oklch, var(--status-completed) 90%, transparent)' } : undefined}
     >
-      {live ? `Connected to a running Orca${orca?.pid ? ` (pid ${orca.pid})` : ''}.` : 'Orca isn’t running; showing last-known state.'}
+      {checking ? 'Checking Orca…' : live ? `Connected to a running Orca${orca?.pid ? ` (pid ${orca.pid})` : ''}.` : unreachable ? `Can’t reach Orca CLI (${short}) — retrying` : 'Orca isn’t running; showing last-known state.'}
     </StatusPill>
   )
 }

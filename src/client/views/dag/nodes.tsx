@@ -9,6 +9,7 @@ import type { Direction, TaskInfo } from './model'
 import type { OrchTask } from '../../../shared/contract'
 import { useFlowMotion } from '../../ui/flow'
 import type { EdgeFlowData, NodeFlowData } from './overlay'
+import { costDisplay, type CostDisplay } from './cost-display'
 import { CostTicker, EdgeParticles, NodeFlowOverlay } from './FlowOverlay'
 
 export interface SessionNodeData extends Record<string, unknown> {
@@ -29,7 +30,12 @@ export interface TaskNodeData extends Record<string, unknown> {
   direction: Direction
   now: number
   /** Assignee session cost (overlay on, usage known). */
-  cost?: number | null
+  cost?: CostDisplay | null
+}
+
+function plainCost(s: SessionSummary): string {
+  const d = costDisplay(s, false)
+  return d.kind === 'cost' ? formatCost(d.cost) : d.kind === 'aiu' ? `${d.aiu.toFixed(1)} AIU` : '—'
 }
 
 const handles = (d: Direction) => (d === 'RIGHT' ? [Position.Left, Position.Right] : [Position.Top, Position.Bottom])
@@ -96,10 +102,10 @@ function SessionNodeImpl({ data }: NodeProps) {
       <div className="relative line-clamp-2 text-[11.5px] leading-snug font-medium">{s.title}</div>
       <div className="relative mt-auto truncate font-mono text-[9.5px] opacity-70">
         {flow && s.usage
-          ? <CostTicker cost={s.cost ?? 0} prefix={s.live && s.current ? `▸ ${s.current.label}${s.current.detail ? ` · ${s.current.detail}` : ''} ·` : undefined} />
+          ? <CostTicker d={costDisplay(s, false)} prefix={s.live && s.current ? `▸ ${s.current.label}${s.current.detail ? ` · ${s.current.detail}` : ''} ·` : undefined} />
           : s.live && s.current
             ? `▸ ${s.current.label}${s.current.detail ? ` · ${s.current.detail}` : ''}`
-            : c ? `${c.tools} tools · ${c.fileChanges} files · ${formatCost(s.cost)}` : formatCost(s.cost)}
+            : c ? `${c.tools} tools · ${c.fileChanges} files · ${plainCost(s)}` : plainCost(s)}
       </div>
     </motion.div>
   )
@@ -135,10 +141,10 @@ function TaskNodeImpl({ data }: NodeProps) {
       {info.lastSeen !== null && (
         <div className={cn('mt-auto flex items-center justify-between text-[9px] opacity-70', stale && 'text-amber-500 font-bold opacity-100')}>
           <span>last seen {formatRelative(info.lastSeen, now)}</span>
-          {cost != null && <CostTicker cost={cost} className="font-mono" />}
+          {cost != null && <CostTicker d={cost} className="font-mono" />}
         </div>
       )}
-      {info.lastSeen === null && cost != null && <div className="mt-auto text-[9px] opacity-70"><CostTicker cost={cost} className="font-mono" /></div>}
+      {info.lastSeen === null && cost != null && <div className="mt-auto text-[9px] opacity-70"><CostTicker d={cost} className="font-mono" /></div>}
     </div>
   )
 }

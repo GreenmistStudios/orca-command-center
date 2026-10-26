@@ -21,11 +21,13 @@ export interface ScopeBarProps {
   windowMs: number | null
   lastSampleAt: number | null
   exporting: boolean
+  /** True whenever any cost figure is visible (cost KPI, ledger column, cost units). */
+  showsCost: boolean
   onPrefs(p: Partial<TokensPrefs>): void
   onExport(): void
 }
 
-export function ScopeBar({ resolved, prefs, windowMs, lastSampleAt, exporting, onPrefs, onExport }: ScopeBarProps) {
+export function ScopeBar({ resolved, prefs, windowMs, lastSampleAt, exporting, showsCost, onPrefs, onExport }: ScopeBarProps) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 5000); return () => clearInterval(t) }, [])
   const live = lastSampleAt != null && now - lastSampleAt < LIVE_FRESH_MS
@@ -54,7 +56,7 @@ export function ScopeBar({ resolved, prefs, windowMs, lastSampleAt, exporting, o
         options={[{ value: 'auto', label: 'Auto' }, { value: 'agent', label: 'Agents' }, { value: 'session', label: 'Sessions' }, { value: 'model', label: 'Models' }]}
       />
       <div className="ml-auto flex items-center gap-2">
-        {prefs.units === 'cost' && <CostDisclaimer />}
+        {showsCost && <CostDisclaimer />}
         <span className="text-muted-foreground flex items-center gap-1.5 text-[11px]" data-testid="tokens-live" data-live={live}>
           <LiveDot live={live} />{live ? 'Live' : 'Idle'}
         </span>

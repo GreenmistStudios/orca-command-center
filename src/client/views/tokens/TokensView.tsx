@@ -70,7 +70,6 @@ export function TokensView() {
   const brush = useCallback((r: [number, number]) => setZoom(r), [])
 
   const onNodeClick = useCallback((node: SankeyNode) => {
-    if (node.kind !== 'middle' || node.id === 'mid:other') return
     const middle = report?.sankey.middle
     if (middle === 'session') { if (node.sessionId) selectSession(node.sessionId); return }
     if (middle !== 'agent' && middle !== 'model') return
@@ -100,7 +99,7 @@ export function TokensView() {
   const bar = (
     <ScopeBar
       resolved={resolved} prefs={prefs} windowMs={windowMs} lastSampleAt={Math.max(live.lastSampleAt ?? 0, report?.totals.lastTs ?? 0) || null}
-      exporting={exporting} onPrefs={setTokensPrefs} onExport={exportCsv}
+      exporting={exporting} showsCost={prefs.units === 'cost' || (report?.totals.costedCalls ?? 0) > 0} onPrefs={setTokensPrefs} onExport={exportCsv}
     />
   )
 
@@ -131,7 +130,7 @@ export function TokensView() {
         {(resolved.kind === 'workflow' || resolved.kind === 'session') && <Yield report={report} onOpen={openChanges} />}
         {prefs.showCalls && (
           <CallsLedger
-            calls={calls} inFlight={report.inFlight} sessions={sessions} hasMore={callsL?.data?.hasMore ?? false}
+            calls={calls} scope={scope} sessions={sessions} hasMore={callsL?.data?.hasMore ?? false}
             loading={callsL?.status === 'loading'} onLoadOlder={loadOlder} onSelectSession={selectSession}
           />
         )}

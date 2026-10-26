@@ -90,8 +90,9 @@ describe('sortScoreboard', () => {
       rates: { windowMs: 300000, asOf: 1, inflowPerMin: 0, outflowPerMin: 0, costPerHour: 0, callsPerMin: 0 },
     }
     renderWithMockStore(<OverviewView />, { bootstrap: b })
-    expect(screen.getByTestId('kpi-tokens-value').textContent).toContain('1.2')
-    expect(screen.getByTestId('kpi-cost-value').textContent).toContain('1.25')
+    expect(within(screen.getByTestId('kpi-tokens-value')).getByRole('img', { name: /1[.,]234|1\.2/ })).toBeTruthy()
+    expect(within(screen.getByTestId('kpi-cost-value')).getByRole('img', { name: /1\.25/ })).toBeTruthy()
+    expect(screen.getByTestId('kpi-cost').querySelector('[data-cost-disclaimer]')).toBeTruthy()
     expect(screen.getByTestId('kpi-cost-lifetime').textContent).toContain('lifetime of sessions active in window')
     expect(screen.getByTestId('kpi-tokens-lifetime').textContent).toContain('lifetime')
     fireEvent.click(screen.getByTestId('view-token-flow'))

@@ -1,12 +1,12 @@
 import { motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { SessionSummary, UsageEstimate, UsageSample } from '../../shared/contract'
+import type { SessionSummary, UsageSample, UsageScope } from '../../shared/contract'
 import { inflowOf, outflowOf, percentile, throughputTps } from '../../shared/usage-math'
 import { cn } from '../lib/cn'
 import { formatClock, formatCost, formatDuration, formatTokens, shortModel } from '../lib/format'
 import { stableUsageScope } from '../state/selectors'
 import { usageCallsKey, useOcc } from '../state/store'
-import { useLiveUsage } from '../state/usage-live'
+import { useInFlightMeters, useLiveUsage } from '../state/usage-live'
 import { Button, Segmented } from '../ui'
 import {
   AnimatedBarList, CostDisclaimer, FLOW_LABEL, FLOW_VAR, InFlightMeter, KpiTile, RadialGauge, Sparkline, type BarRow,
@@ -130,6 +130,7 @@ export function ContextChart({ calls, highlightId, onSelect }: { calls: UsageSam
 
 /* ───────────────────────────── calls table ───────────────────────────── */
 
+const SEEN_CAP = 500
 const COLS = '56px 1fr 52px 52px 52px 52px 52px 52px 52px 52px 52px 64px'
 const HEAD = ['Time', 'Model', 'Fresh in', 'Cache rd', 'Cache wr', 'Out', 'Reason', 'Cost', 'TTFT', 'Dur', 'tok/s', 'Finish']
 
@@ -158,15 +159,16 @@ function CallRow({ c, highlighted, isNew }: { c: UsageSample; highlighted: boole
 }
 
 function CallsTable({
-  calls, inFlight, highlightId, onHighlight, canLoadOlder, onLoadOlder, loadingOlder, live, titleOf, scrollToId,
+  calls, scope, highlightId, onHighlight, canLoadOlder, onLoadOlder, loadingOlder, live, titleOf, scrollToId,
 }: {
-  calls: UsageSample[]; inFlight: UsageEstimate[]; highlightId: string | null; onHighlight: (id: string | null) => void
+  calls: UsageSample[]; scope: UsageScope; highlightId: string | null; onHighlight: (id: string | null) => void
   canLoadOlder: boolean; onLoadOlder: () => void; loadingOlder: boolean; live: boolean; titleOf: (id: string) => string; scrollToId: string | null
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [follow, setFollow] = useState(true)
   const [scrollStart, setScrollStart] = useState(0)
   const seen = useRef<Set<string> | null>(null)
+  const inFlight = useInFlightMeters(scope)
   const n = calls.length
   const start = Math.max(0, (follow ? n - VISIBLE_ROWS : scrollStart) - OVERSCAN)
   const end = Math.min(n, start + VISIBLE_ROWS + 2 * OVERSCAN)
@@ -175,7 +177,8 @@ function CallsTable({
     const prev = seen.current
     return new Set(prev ? calls.filter((c) => !prev.has(c.id)).map((c) => c.id) : [])
   }, [calls])
-  useEffect(() => { seen.current = new Set(calls.map((c) => c.id)) }, [calls])
+  // Only the most recent ids matter for row-enter animation: cap the set.
+  useEffect(() => { seen.current = new Set(calls.slice(-SEEN_CAP).map((c) => c.id)) }, [calls])
 
   useEffect(() => {
     const el = ref.current
@@ -205,7 +208,7 @@ function CallsTable({
     <div data-testid="calls-table" className="overflow-x-auto">
       <div className="min-w-[760px]">
         <div className="text-muted-foreground grid gap-1 px-1 text-[9px] font-semibold tracking-wide uppercase" style={{ gridTemplateColumns: COLS }}>
-          {HEAD.map((h, i) => <span key={h} className={cn(i > 1 && i < 11 && 'text-right')}>{h}</span>)}
+          {HEAD.map((h, i) => <span key={h} className={cn(i > 1 && i < 11 && 'text-right')}>{h}{h === 'Cost' && <CostDisclaimer />}</span>)}
         </div>
         {canLoadOlder && (
           <div className="py-1 text-center">
@@ -227,7 +230,7 @@ function CallsTable({
           <div key={e.sessionId} data-testid="inflight-row" className="grid items-center gap-1 px-1 text-[10px]" style={{ gridTemplateColumns: COLS, minHeight: ROW_H }}>
             <span className="tabular-nums">{live ? 'now' : formatClock(e.startedAt)}</span>
             <span className="truncate font-mono">{titleOf(e.sessionId)}</span>
-            <span style={{ gridColumn: '3 / span 6' }}><InFlightMeter estTokens={e.estOutputTokens} startedAt={e.startedAt} /></span>
+            <span style={{ gridColumn: '3 / span 6' }}><InFlightMeter estTokens={e.estTokens} startedAt={e.startedAt} metered={e.metered} /></span>
           </div>
         ))}
       </div>
@@ -362,7 +365,7 @@ export function UsageTab({ session }: { session: SessionSummary }) {
 
       <Section title="Calls">
         <CallsTable
-          calls={calls} inFlight={report.inFlight} highlightId={highlight}
+          calls={calls} scope={scope} highlightId={highlight}
           onHighlight={setHighlight} scrollToId={scrollTo}
           canLoadOlder={hasMore} onLoadOlder={loadOlder}
           loadingOlder={olderRequested && olderEntry?.status === 'loading'} live={session.live} titleOf={titleOf}

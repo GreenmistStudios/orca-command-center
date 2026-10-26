@@ -40,7 +40,34 @@ describe('Header', () => {
   })
 
   it('shows the grey pill when Orca is stopped', () => {
-    renderWithMockStore(<Header />, { bootstrap: mockBootstrap({ scenario: 'degraded' }) })
+    const b = mockBootstrap({ scenario: 'degraded' })
+    const orca = { ...b.meta.orca, running: false, error: null }
+    renderWithMockStore(<Header />, { bootstrap: { ...b, meta: { ...b.meta, orca }, orca: { ...b.orca, status: orca } } })
+    expect(screen.getByTestId('orca-pill')).toHaveTextContent('Orca isn’t running; showing last-known state.')
+  })
+})
+
+describe('Orca pill copy', () => {
+  it('is neutral and honest when the CLI is unreachable', () => {
+    const b = mockBootstrap({ scenario: 'degraded' })
+    const orca = { ...b.meta.orca, running: false, error: 'timed out after 3000 ms' }
+    renderWithMockStore(<Header />, { bootstrap: { ...b, meta: { ...b.meta, orca }, orca: { ...b.orca, status: orca } } })
+    expect(screen.getByTestId('orca-pill')).toHaveTextContent('Can’t reach Orca CLI (timed out after 3000 ms) — retrying')
+  })
+})
+
+describe('Orca pill: not checked yet', () => {
+  it('shows a neutral "Checking Orca…" before the first poll completes', () => {
+    const b = mockBootstrap({ scenario: 'degraded' })
+    const orca = { ...b.meta.orca, running: false, error: null, checkedAt: 0 }
+    renderWithMockStore(<Header />, { bootstrap: { ...b, meta: { ...b.meta, orca }, orca: { ...b.orca, status: orca } } })
+    expect(screen.getByTestId('orca-pill')).toHaveTextContent('Checking Orca…')
+  })
+
+  it('keeps the not-running copy once checked', () => {
+    const b = mockBootstrap({ scenario: 'degraded' })
+    const orca = { ...b.meta.orca, running: false, error: null, checkedAt: 1234 }
+    renderWithMockStore(<Header />, { bootstrap: { ...b, meta: { ...b.meta, orca }, orca: { ...b.orca, status: orca } } })
     expect(screen.getByTestId('orca-pill')).toHaveTextContent('Orca isn’t running; showing last-known state.')
   })
 })
@@ -121,7 +148,7 @@ describe('Header burn pill', () => {
     renderWithMockStore(<Header />)
     setStats({ totals: {}, rates: { windowMs: 300000, asOf: Date.now() + 1e9, inflowPerMin: 40000, outflowPerMin: 2000, costPerHour: 3.4, callsPerMin: 2 } })
     const pill = screen.getByTestId('burn-pill')
-    expect(pill.textContent).toContain('3.40')
+    expect(within(pill).getByRole('img', { name: /3\.40/ })).toBeTruthy()
     expect(pill.textContent).toContain('tok/min')
     expect(pill.getAttribute('title')).toMatch(/5 minutes/)
     await userEvent.click(pill)

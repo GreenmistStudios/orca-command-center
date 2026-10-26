@@ -86,7 +86,7 @@ describe('Rail', () => {
     }
     renderWithMockStore(<Rail />, { bootstrap: b })
     const row = screen.getAllByTestId('rail-root-row').find((r) => r.getAttribute('data-session-id') === root.id)!
-    expect(within(row).getByTestId('rail-cost').textContent).toContain('3.50')
+    expect(within(within(row).getByTestId('rail-cost')).getByRole('img', { name: /3\.50/ })).toBeTruthy()
     expect(within(row).getByTestId('rail-flow-bar').getAttribute('data-inflow-share')).toBe('0.750')
     expect(within(row).queryByTestId('rail-shimmer')).toBeNull()
     act(() => useOcc.setState((st) => ({

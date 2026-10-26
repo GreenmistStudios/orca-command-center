@@ -3,10 +3,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UsageEstimate, UsageSample } from '../../../shared/contract'
 import { cn } from '../../lib/cn'
 import { stableUsageScope } from '../../state/selectors'
-import { useUsageBurst } from '../../state/usage-live'
+import { useInFlightMeters, useUsageBurst } from '../../state/usage-live'
 import {
   CostDisclaimer, DeltaChips, formatFlowValue, FLOW_VAR, InFlightMeter, Odometer, useFlowMotion, type DeltaChipsHandle,
 } from '../../ui/flow'
+import { CostOrAiu, type CostDisplay } from './cost-display'
 import { particleCount, particleDuration, ringArcs, type EdgeFlowData, type NodeFlowData } from './overlay'
 import type { SessionSummary } from '../../../shared/contract'
 
@@ -75,6 +76,7 @@ export function NodeFlowOverlay({ s, shares }: { s: SessionSummary; shares: Node
   useUsageBurst(stableUsageScope('session', s.id), onBurst)
   const { inArc, outArc } = ringArcs(shares)
   const f = s.usage?.inFlight
+  const entry = useInFlightMeters(stableUsageScope('workflow', s.rootId ?? s.id)).find((e) => e.sessionId === s.id)
   return (
     <>
       <svg aria-hidden className="pointer-events-none absolute -inset-[6px] h-[calc(100%+12px)] w-[calc(100%+12px)] overflow-visible" data-testid="flow-ring">
@@ -88,18 +90,20 @@ export function NodeFlowOverlay({ s, shares }: { s: SessionSummary; shares: Node
           style={{ animation: 'orca-pulse 1s ease-out 1', ['--orca-pulse' as string]: FLOW_VAR.output }} />
       )}
       <DeltaChips ref={chips} className="pointer-events-none absolute top-0 right-2" />
-      {f && f.inFlight && (
+      {entry ? (
+        <InFlightMeter className="pointer-events-none absolute right-3 left-4 top-[34px] scale-y-[.6]" estTokens={entry.estTokens} startedAt={entry.startedAt} metered={entry.metered} />
+      ) : f && f.inFlight && (
         <InFlightMeter className="pointer-events-none absolute right-3 left-4 top-[34px] scale-y-[.6]" estTokens={f.estOutputTokens} startedAt={f.startedAt} />
       )}
     </>
   )
 }
 
-export function CostTicker({ cost, prefix, className }: { cost: number; prefix?: string; className?: string }) {
+export function CostTicker({ d, prefix, className }: { d: CostDisplay; prefix?: string; className?: string }) {
   return (
     <span className={cn('inline-flex items-baseline gap-1', className)} data-testid="cost-ticker">
       {prefix && <span className="truncate">{prefix}</span>}
-      <Odometer value={cost} format="cost" size="sm" />
+      <CostOrAiu d={d} />
     </span>
   )
 }
@@ -114,7 +118,7 @@ export function OverlayToggle({ on, onToggle }: { on: boolean; onToggle: () => v
 }
 
 export function WorkflowPill({ tree, burn, onOpen }: {
-  tree: { inflow: number; outflow: number; cost: number }
+  tree: { inflow: number; outflow: number; cost: number; costedCalls: number; aiu: number }
   burn: { tokensPerMin: number; costPerHour: number }
   onOpen: () => void
 }) {
@@ -124,7 +128,7 @@ export function WorkflowPill({ tree, burn, onOpen }: {
       <button type="button" onClick={onOpen} aria-label="Open workflow in Tokens view" className="flex items-center gap-3">
         <span className="flex items-center gap-1" style={{ color: FLOW_VAR.input }}>↓ <Odometer value={tree.inflow} format="tokens" size="sm" /></span>
         <span className="flex items-center gap-1" style={{ color: FLOW_VAR.output }}>↑ <Odometer value={tree.outflow} format="tokens" size="sm" /></span>
-        <span className="flex items-center gap-1" style={{ color: FLOW_VAR.cost }}><Odometer value={tree.cost} format="cost" size="sm" /></span>
+        <span className="flex items-center gap-1" style={{ color: FLOW_VAR.cost }}><CostOrAiu d={tree.costedCalls > 0 ? { kind: 'cost', cost: tree.cost } : tree.aiu > 0 ? { kind: 'aiu', aiu: tree.aiu } : { kind: 'none' }} /></span>
         <span className="text-muted-foreground font-mono text-[10px]" data-testid="workflow-burn">
           burn {formatFlowValue(burn.tokensPerMin, 'tokens').text}/min · ${burn.costPerHour.toFixed(2)}/h
         </span>
