@@ -22,7 +22,7 @@ describe('DagView', () => {
   })
 
   it('renders the agent tree and selects on click', async () => {
-    renderWithMockStore(<DagView layout={layout} />, { uiState: { selectedRootId: MOCK_IDS.rootBuild, selectedSessionId: MOCK_IDS.rootBuild } })
+    renderWithMockStore(<DagView layout={layout} />, { uiState: { selectedRootId: MOCK_IDS.rootBuild, selectedSessionId: MOCK_IDS.rootBuild, tokens: { ...useOcc.getState().ui.tokens, overlay: false } } })
     await waitFor(() => expect(screen.getAllByTestId('session-node')).toHaveLength(7))
     expect(screen.getByTestId('dag-caption').textContent).toContain('6 agents')
     fireEvent.click(screen.getAllByTestId('session-node').find((n) => n.getAttribute('data-session-id') === MOCK_IDS.coderTests)!)
@@ -40,5 +40,45 @@ describe('DagView', () => {
     renderWithMockStore(<DagView layout={layout} />, { uiState: { selectedRunId: MOCK_IDS.runBoard } })
     await waitFor(() => expect(screen.getAllByTestId('task-node').length).toBeGreaterThanOrEqual(6))
     expect(screen.getByTestId('dag-caption').textContent).toMatch(/^6 tasks · \d+ dependenc/)
+  })
+})
+
+describe('DagView token-flow overlay', () => {
+  const ui = { selectedRootId: MOCK_IDS.rootBuild, selectedSessionId: MOCK_IDS.rootBuild }
+  const ready = () => waitFor(() => expect(screen.getAllByTestId('session-node')).toHaveLength(7))
+
+  it('renders rings, cost tickers and the workflow pill when on; nothing when off', async () => {
+    const { unmount } = renderWithMockStore(<DagView layout={layout} />, { uiState: ui })
+    await ready()
+    expect(useOcc.getState().ui.tokens.overlay).toBe(true)
+    expect(screen.getAllByTestId('flow-ring').length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId('cost-ticker').length).toBeGreaterThan(0)
+    expect(screen.getByTestId('workflow-pill').textContent).toMatch(/burn/)
+    expect(screen.queryByTestId('dag-caption')).toBeNull()
+    unmount()
+
+    renderWithMockStore(<DagView layout={layout} />, { uiState: { ...ui, tokens: { ...useOcc.getState().ui.tokens, overlay: false } } })
+    await ready()
+    expect(screen.queryByTestId('flow-ring')).toBeNull()
+    expect(screen.queryByTestId('cost-ticker')).toBeNull()
+    expect(screen.queryByTestId('workflow-pill')).toBeNull()
+    expect(screen.queryByTestId('edge-flow')).toBeNull()
+    expect(screen.getByTestId('dag-caption')).toBeTruthy()
+  })
+
+  it('toggle flips the preference', async () => {
+    renderWithMockStore(<DagView layout={layout} />, { uiState: ui })
+    await ready()
+    fireEvent.click(screen.getByTestId('flow-toggle'))
+    expect(useOcc.getState().ui.tokens.overlay).toBe(false)
+    expect(screen.queryByTestId('workflow-pill')).toBeNull()
+  })
+
+  it('workflow pill opens the Tokens view with workflow scope', async () => {
+    renderWithMockStore(<DagView layout={layout} />, { uiState: ui })
+    await ready()
+    fireEvent.click(screen.getByLabelText('Open workflow in Tokens view'))
+    expect(useOcc.getState().ui.view).toBe('tokens')
+    expect(useOcc.getState().ui.tokens.scope).toBe('workflow')
   })
 })

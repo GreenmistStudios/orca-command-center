@@ -8,6 +8,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useOcc } from '../../state/store'
 import { Button, EmptyState, Spinner, toneClasses } from '../../ui'
 import { cn } from '../../lib/cn'
+import { OverlayToggle, WorkflowPill } from './FlowOverlay'
+import { edgeFlowFor, nodeShares, workflowBurn } from './overlay'
 import { elkLayout } from './layout'
 import {
   assigneeLabels, buildRunGraph, buildTreeGraph, edgeStyle, mergeTreeNodes, runCaption, SESSION_SIZE, structureKey, TASK_SIZE,
@@ -43,6 +45,9 @@ function DagCanvas({ layout }: { layout: LayoutFn }) {
   const dagDirection = useOcc((s) => s.ui.dagDirection)
   const harnessFilter = useOcc((s) => s.ui.harnessFilter)
   const sessions = useOcc((s) => s.sessions)
+  const overlay = useOcc((s) => s.ui.tokens.overlay)
+  const setTokensPrefs = useOcc((s) => s.setTokensPrefs)
+  const setView = useOcc((s) => s.setView)
   const tree = useOcc((s) => (rootId ? s.trees[rootId] : undefined))
   const run = useOcc((s) => (runId ? s.runs[runId] : undefined))
   const fetchTree = useOcc((s) => s.fetchTree)
@@ -102,24 +107,34 @@ function DagCanvas({ layout }: { layout: LayoutFn }) {
     if (!graph || !pos) return { nodes: [] as Node[], edges: [] as Edge[] }
     const stateOf = new Map<string, string>()
     const nodes: Node[] = []
+    const rootTree = mode === 'tree' && tree?.data ? sessions[tree.data.rootId]?.usage?.tree ?? null : null
     if (mode === 'tree') {
       const byId = new Map(treeNodes.map((n) => [n.id, n]))
       for (const g of graph.nodes) {
         const s = byId.get(g.id)
         if (!s || !pos[g.id]) continue
         stateOf.set(g.id, s.state)
-        const data: SessionNodeData = { s, selected: s.id === selectedSessionId, dimmed: harnessFilter !== 'all' && s.harness !== harnessFilter, direction, now }
+        const data: SessionNodeData = { s, selected: s.id === selectedSessionId, dimmed: harnessFilter !== 'all' && s.harness !== harnessFilter, direction, now, ...(overlay ? { flow: nodeShares(s, rootTree) } : {}) }
         nodes.push({ id: g.id, type: 'session', position: pos[g.id], data, width: SESSION_SIZE.w, height: SESSION_SIZE.h, draggable: false, connectable: false })
       }
     } else if (run?.data) {
       const d = run.data
       const who = assigneeLabels(d.tasks, d.dispatches, sessions)
       const isolated = new Set(graph.nodes.filter((n) => n.isolated).map((n) => n.id))
+      const sessionOf = (taskId: string, latest: string | null) => {
+        const ds = d.dispatches.filter((x) => x.taskId === taskId)
+        return (ds.find((x) => x.id === latest) ?? ds[ds.length - 1])?.assigneeSessionId ?? null
+      }
       for (const t of d.tasks) {
         if (!pos[t.id]) continue
         const info = taskInfo(t, d)
         stateOf.set(t.id, info.status)
         const data: TaskNodeData = { task: t, info, assignee: who[t.id] ?? null, selected: t.id === selectedTaskId, direction, now }
+        if (overlay) {
+          const sid = sessionOf(t.id, t.latestDispatchId)
+          const sess = sid ? sessions[sid] : undefined
+          if (sess?.usage) data.cost = sess.cost ?? 0
+        }
         nodes.push({
           id: t.id, type: 'task', position: pos[t.id], data, width: TASK_SIZE.w, height: TASK_SIZE.h,
           hidden: isolated.has(t.id) && !isolatedOpen, draggable: false, connectable: false,
@@ -128,17 +143,22 @@ function DagCanvas({ layout }: { layout: LayoutFn }) {
     }
     const edges: Edge[] = graph.edges.map((e) => {
       const st = edgeStyle(stateOf.get(e.target) ?? null)
-      const data: DagEdgeData = { label: e.label, style: { stroke: st.stroke, strokeWidth: st.strokeWidth, strokeDasharray: st.strokeDasharray, opacity: st.opacity } }
+      const flow = overlay && mode === 'tree' ? edgeFlowFor(sessions[e.target]) : null
+      const data: DagEdgeData = { label: e.label, ...(flow ? { flow } : {}), style: { stroke: st.stroke, strokeWidth: st.strokeWidth, strokeDasharray: st.strokeDasharray, opacity: st.opacity } }
       return { id: e.id, source: e.source, target: e.target, type: 'dag', animated: st.animated, data, markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18, color: st.stroke } }
     })
     return { nodes, edges }
-  }, [graph, pos, mode, treeNodes, run?.data, sessions, selectedSessionId, selectedTaskId, harnessFilter, direction, now, isolatedOpen])
+  }, [graph, pos, mode, treeNodes, run?.data, sessions, selectedSessionId, selectedTaskId, harnessFilter, direction, now, isolatedOpen, overlay, tree?.data])
 
   const caption = useMemo(() => {
     if (mode === 'tree' && tree?.data) return treeCaption(sessions[tree.data.rootId]?.title ?? treeNodes[0]?.title ?? '', treeNodes)
     if (mode === 'run' && run?.data && graph) return runCaption(run.data.tasks, graph.edges.length)
     return null
   }, [mode, tree?.data, run?.data, graph, sessions, treeNodes])
+
+  const wfTree = mode === 'tree' && tree?.data ? sessions[tree.data.rootId]?.usage?.tree ?? null : null
+  const burn = useMemo(() => workflowBurn(treeNodes), [treeNodes])
+  const showPill = overlay && mode === 'tree' && wfTree !== null
 
   const isolatedCount = graph ? graph.nodes.filter((n) => n.isolated).length : 0
 
@@ -201,13 +221,17 @@ function DagCanvas({ layout }: { layout: LayoutFn }) {
                 Isolated tasks ({isolatedCount})
               </button>
             )}
+            <OverlayToggle on={overlay} onToggle={() => setTokensPrefs({ overlay: !overlay })} />
             {mode === 'tree' && (
               <button type="button" className={pill} aria-pressed={follow} onClick={() => setFollow((v) => !v)}>
                 Follow live{follow ? ' ✓' : ''}
               </button>
             )}
           </div>
-          {caption && <div data-testid="dag-caption" className={cn(pill, 'absolute top-3 left-1/2 z-10 -translate-x-1/2')}>{caption}</div>}
+          {showPill && wfTree && (
+            <WorkflowPill tree={wfTree} burn={burn} onOpen={() => { setTokensPrefs({ scope: 'workflow' }); setView('tokens') }} />
+          )}
+          {caption && !showPill && <div data-testid="dag-caption" className={cn(pill, 'absolute top-3 left-1/2 z-10 -translate-x-1/2')}>{caption}</div>}
           <div className={cn(pill, 'absolute bottom-3 left-1/2 z-10 -translate-x-1/2')}>fill = state · stripe = agent</div>
         </>
       )}

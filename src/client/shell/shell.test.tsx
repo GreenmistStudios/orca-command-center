@@ -109,3 +109,23 @@ describe('Shell', () => {
     expect(location.search).toContain('mock=1')
   })
 })
+
+describe('Header burn pill', () => {
+  const setStats = (usage: unknown) => act(() => useOcc.setState((st) => ({ stats: { ...st.stats!, usage: usage as never } })))
+  it('shows neutral state when nothing burns', () => {
+    renderWithMockStore(<Header />)
+    setStats({ totals: {}, rates: { windowMs: 300000, asOf: Date.now(), inflowPerMin: 0, outflowPerMin: 0, costPerHour: 0, callsPerMin: 0 } })
+    expect(screen.getByTestId('burn-pill')).toHaveTextContent('No token burn')
+  })
+  it('shows $/h and tok/min and opens the fleet tokens view on click', async () => {
+    renderWithMockStore(<Header />)
+    setStats({ totals: {}, rates: { windowMs: 300000, asOf: Date.now() + 1e9, inflowPerMin: 40000, outflowPerMin: 2000, costPerHour: 3.4, callsPerMin: 2 } })
+    const pill = screen.getByTestId('burn-pill')
+    expect(pill.textContent).toContain('3.40')
+    expect(pill.textContent).toContain('tok/min')
+    expect(pill.getAttribute('title')).toMatch(/5 minutes/)
+    await userEvent.click(pill)
+    expect(useOcc.getState().ui.view).toBe('tokens')
+    expect(useOcc.getState().ui.tokens.scope).toBe('fleet')
+  })
+})

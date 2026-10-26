@@ -1,10 +1,10 @@
-import { Command, Database, Moon, Radar, Sun } from 'lucide-react'
+import { Command, Database, Flame, Moon, Radar, Sun } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useCompact } from '../hooks/useCompact'
 import { useNow } from '../hooks/useNow'
 import { formatClock, formatRelative } from '../lib/format'
 import { cn } from '../lib/cn'
-import { selectFleetPulse } from '../state/selectors'
+import { selectFleetBurn, selectFleetPulse } from '../state/selectors'
 import { useOcc, type ConnectionState } from '../state/store'
 import type { SourceHealth, SourceStatus } from '../../shared/contract'
 import { Button, IconButton } from '../ui/Button'
@@ -12,6 +12,9 @@ import { LiveDot } from '../ui/LiveDot'
 import { Popover } from '../ui/Overlay'
 import { Badge, StatusPill } from '../ui/Pills'
 import { toneClasses } from '../ui/tones'
+import { COST_DISCLAIMER } from '../ui/flow/CostDisclaimer'
+import { formatCost, formatTokens } from '../lib/format'
+import { Odometer } from '../ui/flow/Odometer'
 
 const SPRING = { type: 'spring', stiffness: 380, damping: 34, mass: 0.9 } as const
 
@@ -55,6 +58,36 @@ function FleetPulse() {
       <span className="opacity-40">·</span>
       <span className="text-muted-foreground flex items-center gap-1.5" title="Agents idle or done, including subagents"><span className={cn('size-1.5 rounded-full', toneClasses('pending').dot)} /><b className="tabular-nums">{p.idle}</b> idle</span>
     </div>
+  )
+}
+
+function BurnPill() {
+  const b = useOcc(selectFleetBurn)
+  const setView = useOcc((s) => s.setView)
+  const setTokensPrefs = useOcc((s) => s.setTokensPrefs)
+  const idle = b.costPerHour <= 0 && b.tokensPerMin <= 0 && b.inFlight === 0
+  const glow = b.inFlight > 0
+  const tip = `Fleet burn over the last 5 minutes. ${COST_DISCLAIMER}`
+  return (
+    <button
+      type="button"
+      data-testid="burn-pill"
+      data-state={idle ? 'idle' : glow ? 'streaming' : 'active'}
+      title={tip}
+      aria-label={idle ? 'No token burn. Open token flow' : `Token burn ${formatCost(b.costPerHour)} per hour, ${formatTokens(b.tokensPerMin)} tokens per minute. Open token flow`}
+      onClick={() => { setTokensPrefs({ scope: 'fleet' }); setView('tokens') }}
+      className={cn('focus-ring flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium', idle ? 'text-muted-foreground border-panel-border/70' : 'border-panel-border')}
+      style={glow ? { boxShadow: '0 0 16px -6px var(--flow-cost)' } : undefined}
+    >
+      <Flame size={12} aria-hidden style={idle ? undefined : { color: 'var(--flow-cost)' }} />
+      {idle ? 'No token burn' : (
+        <span className="flex items-baseline gap-1">
+          <Odometer value={b.costPerHour} format="cost" size="sm" /><span>/h</span>
+          <span className="opacity-40">·</span>
+          <span className="tabular-nums">{formatTokens(b.tokensPerMin)} tok/min</span>
+        </span>
+      )}
+    </button>
   )
 }
 
@@ -110,6 +143,7 @@ function SourcesPopover() {
       className="w-80"
       trigger={<Button data-testid="sources-button" className="gap-1.5"><Database size={12} />Sources</Button>}
     >
+      <div className="mb-2"><BurnPill /></div>
       <div className="section-label mb-1">Sources</div>
       <ul>{(sources ?? []).map((s) => <SourceRow key={s.id} s={s} />)}</ul>
       {last && <div className="text-muted-foreground pt-2">Last event {formatRelative(last, now) === 'now' ? 'just now' : formatRelative(last, now)}</div>}
@@ -146,6 +180,7 @@ export function Header() {
       <OrcaPill />
       <StreamPill connection={connection} />
       <FleetPulse />
+      {!compact && <BurnPill />}
       <div className="text-muted-foreground ml-auto flex items-center gap-3 text-[11px]">
         {compact ? <SourcesPopover /> : <><SourceChips /><LastEvent /></>}
         <Button onClick={() => setPaletteOpen(true)} className="gap-1.5" aria-label="Search (⌘K)"><Command size={12} />Search</Button>

@@ -76,4 +76,21 @@ describe('hotkeys', () => {
     key('k')
     expect(useOcc.getState().ui.selectedRootId).toBe(a)
   })
+
+  it('lists Tokens view and token actions', async () => {
+    renderWithMockStore(<Harness />)
+    act(() => useOcc.getState().setPaletteOpen(true))
+    expect(await screen.findByTestId('palette-view-tokens')).toHaveTextContent('Tokens')
+    await userEvent.click(screen.getByTestId('palette-action-fleet-tokens'))
+    expect(useOcc.getState().ui.view).toBe('tokens')
+    expect(useOcc.getState().ui.tokens.scope).toBe('fleet')
+  })
+
+  it('offers workflow token usage when a session is selected', async () => {
+    renderWithMockStore(<Harness />, { uiState: { selectedSessionId: Object.keys(useOcc.getState().sessions)[0] ?? 'x' } })
+    act(() => useOcc.getState().setPaletteOpen(true))
+    await userEvent.click(await screen.findByTestId('palette-action-workflow-tokens'))
+    expect(useOcc.getState().ui.tokens.scope).toBe('workflow')
+    expect(useOcc.getState().ui.view).toBe('tokens')
+  })
 })

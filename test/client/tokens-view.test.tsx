@@ -15,7 +15,8 @@ afterEach(() => { history.replaceState(null, '', '/'); resetMockBackend(); reset
 function Hotkeys() { useGlobalHotkeys(); return null }
 
 describe('Tokens view registration', () => {
-  it('is the 6th tab and selecting it renders the placeholder', async () => {
+  it('is the 6th tab and selecting it renders the Tokens view', async () => {
+    history.replaceState(null, '', '/?mock=1') // usage reports come from the mock backend
     expect(VIEW_ORDER).toEqual(['dag', 'timeline', 'stream', 'changes', 'overview', 'tokens'])
     renderWithMockStore(<><ViewTabs /><CenterView /></>)
     const tabs = screen.getAllByRole('tab')
@@ -23,7 +24,7 @@ describe('Tokens view registration', () => {
     expect(tabs[5]).toHaveTextContent('Tokens')
     await userEvent.click(screen.getByRole('tab', { name: /Tokens/ }))
     expect(useOcc.getState().ui.view).toBe('tokens')
-    expect(await screen.findByText('Tokens view — Task-24')).toBeInTheDocument()
+    expect(await screen.findByTestId('tokens-view')).toBeInTheDocument()
   })
 
   it('hotkey 6 switches to the Tokens view', async () => {
@@ -44,7 +45,8 @@ describe('Tokens view registration', () => {
   })
 
   it('the shell renders the Tokens view when v=tokens', async () => {
+    history.replaceState(null, '', '/?mock=1')
     renderWithMockStore(<Shell />, { uiState: { view: 'tokens' } })
-    expect(await screen.findByText('Tokens view — Task-24')).toBeInTheDocument()
+    expect(await screen.findByTestId('tokens-view')).toBeInTheDocument()
   })
 })

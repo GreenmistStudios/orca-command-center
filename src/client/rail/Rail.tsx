@@ -3,10 +3,11 @@ import { ChevronDown, ChevronRight, OctagonAlert } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { HARNESS_META, type Harness, type OrchRun, type SessionSummary } from '../../shared/contract'
 import { cn } from '../lib/cn'
-import { formatCost, formatDuration, formatRelative, shortModel } from '../lib/format'
+import { formatDuration, formatRelative, shortModel } from '../lib/format'
 import { useNow } from '../hooks/useNow'
 import { selectDescendants, selectWorkspaceGroups, type WorkspaceGroup } from '../state/selectors'
 import { useOcc } from '../state/store'
+import { FLOW_VAR, Odometer, useFlowMotion } from '../ui/flow'
 import {
   AgentMonogram, EmptyState, HarnessTile, LiveDot, SectionLabel, Segmented, StateDot, StatusPill, Tooltip,
   kindColorVar, stateTone, useSpotlight, STATE_LABEL,
@@ -44,8 +45,14 @@ function RootRow({
     s.live ? formatDuration(now - s.createdAt) : formatRelative(s.lastActivityAt ?? s.updatedAt, now),
     s.descendantCount > 0 ? `${s.descendantCount} subagent${s.descendantCount === 1 ? '' : 's'}` : null,
     tools != null ? `${tools} tools` : null,
-    formatCost(s.cost),
   ].filter(Boolean).join(' · ')
+  const tree = s.usage?.tree ?? null
+  const cost = tree?.cost ?? s.cost
+  const inflow = tree?.inflow ?? s.usage?.inflow ?? 0
+  const outflow = tree?.outflow ?? s.usage?.outflow ?? 0
+  const share = inflow + outflow > 0 ? inflow / (inflow + outflow) : null
+  const streaming = useOcc((o) => !!o.sessions[s.id]?.usage?.inFlight || selectDescendants(o, s.id).some((d) => !!d.usage?.inFlight))
+  const { reduced } = useFlowMotion()
   const model = shortModel(s.model?.modelId)
   const sub = [s.agent, model].filter(Boolean).join(' · ')
   return (
@@ -82,7 +89,35 @@ function RootRow({
           </span>
         </span>
         {sub && <span className="text-muted-foreground/80 truncate pl-4 font-mono text-[10.5px]">{sub}</span>}
-        <span className="text-muted-foreground truncate pl-4 text-[11px]">{meta}</span>
+        <span className="text-muted-foreground flex items-center gap-1 truncate pl-4 text-[11px]">
+          <span className="truncate">{meta}{meta ? ' · ' : ''}</span>
+          <span data-testid="rail-cost" className="shrink-0"><Odometer value={cost} format="cost" size="sm" /></span>
+        </span>
+        {(share != null || streaming) && (
+          <span
+            data-testid="rail-flow-bar"
+            data-inflow-share={share != null ? share.toFixed(3) : undefined}
+            data-streaming={streaming ? 'true' : undefined}
+            className="relative ml-4 mt-0.5 flex h-[3px] overflow-hidden rounded-full"
+            style={{ background: 'color-mix(in oklch, var(--muted-foreground) 15%, transparent)' }}
+          >
+            {share != null && (
+              <>
+                <span data-testid="rail-flow-in" style={{ width: `${share * 100}%`, background: FLOW_VAR.input }} />
+                <span data-testid="rail-flow-out" style={{ width: `${(1 - share) * 100}%`, background: FLOW_VAR.output }} />
+              </>
+            )}
+            {streaming && (
+              <motion.span
+                data-testid="rail-shimmer"
+                className="absolute inset-y-0 w-1/3 bg-white/40"
+                initial={{ left: '-33%' }}
+                animate={reduced ? { left: '0%', opacity: 0.4 } : { left: '100%' }}
+                transition={reduced ? { duration: 0 } : { duration: 1.4, repeat: Infinity, ease: 'linear' }}
+              />
+            )}
+          </span>
+        )}
         {s.live && s.current && (
           <span className="truncate pl-4 font-mono text-[10.5px]" style={{ color: kindColorVar(s.current.kind) }}>
             ▸ {s.current.label}{s.current.detail ? ` · ${s.current.detail}` : ''}
@@ -96,6 +131,7 @@ function RootRow({
 /* ───────────────────────────── the cast ───────────────────────────── */
 
 function CastRow({ c, selected, now }: { c: SessionSummary; selected: boolean; now: number }) {
+  const [hov, setHov] = useState(false)
   const selectSession = useOcc((o) => o.selectSession)
   const showState = c.live || c.state === 'error' || c.state === 'blocked' || c.state === 'waiting'
   const tip = c.current ? `${c.current.label}${c.current.detail ? ` · ${c.current.detail}` : ''}` : (c.spawn?.description ?? null)
@@ -108,6 +144,8 @@ function CastRow({ c, selected, now }: { c: SessionSummary; selected: boolean; n
         aria-current={selected ? 'true' : undefined}
         aria-label={`${c.agent ?? 'agent'}, ${c.title}, ${STATE_LABEL[c.state]}`}
         onClick={() => selectSession(c.id)}
+        onMouseEnter={() => setHov(true)}
+        onMouseLeave={() => setHov(false)}
         style={{ paddingLeft: 28 + Math.max(0, c.depth - 1) * 12 }}
         className={cn('focus-ring hover:bg-accent/60 relative flex w-full items-center gap-2 rounded-lg py-1.5 pr-9 text-left', selected && 'bg-selection-soft/70')}
       >
@@ -116,6 +154,9 @@ function CastRow({ c, selected, now }: { c: SessionSummary; selected: boolean; n
           <span className="font-semibold">{c.agent ?? 'agent'}</span>
           <span className="text-muted-foreground"> · {c.title}</span>
         </span>
+        {(hov || selected) && (
+          <span data-testid="rail-cast-cost" className="text-muted-foreground shrink-0"><Odometer value={c.usage?.tree?.cost ?? c.cost} format="cost" size="sm" /></span>
+        )}
         {showState ? (
           <StatusPill tone={stateTone(c.state)} className="absolute right-2 shrink-0 rounded-full px-1.5 py-px text-[10px]">
             {STATE_LABEL[c.state]}

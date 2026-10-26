@@ -4,6 +4,7 @@ import type { FleetStats, SessionSummary } from '../../../shared/contract'
 import { cn } from '../../lib/cn'
 import { formatCost, formatCount, formatTokens, shortModel } from '../../lib/format'
 import { useOcc } from '../../state/store'
+import { Odometer } from '../../ui/flow'
 import { Duration, EmptyState, HarnessTile, Panel, SectionLabel, StateDot, ToolBadge, kindColorVar } from '../../ui'
 import { Histogram, Sparkline } from './Histogram'
 
@@ -56,14 +57,35 @@ function Kpis({ stats }: { stats: FleetStats }) {
   const idle = Math.max(0, ss.live - ss.working - needs)
   const hist = stats.histogram
   const total = t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite
+  const u = stats.usage?.totals ?? null
+  const ut = u?.tokens ?? null
+  const uTotal = ut ? ut.input + ut.output + ut.reasoning + ut.cacheRead + ut.cacheWrite : 0
+  const setView = useOcc((s) => s.setView)
+  const setTokensPrefs = useOcc((s) => s.setTokensPrefs)
+  const link = (
+    <button type="button" data-testid="view-token-flow" className="focus-ring text-selection text-left text-[11px] underline"
+      onClick={() => { setTokensPrefs({ scope: 'fleet' }); setView('tokens') }}>View token flow →</button>
+  )
   return (
     <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6" data-testid="kpis">
       <Kpi testid="kpi-live" label="Live agents" value={ss.live} sub={`${ss.working} working · ${needs} needs you · ${idle} idle`} />
       <Kpi testid="kpi-tools" label="Tool calls" value={formatCount(a.toolCalls)} sub={<span className={cn(a.toolErrors > 0 && 'text-status-failed-ink')}>{a.toolErrors} errors</span>} spark={<Sparkline values={hist.map((b) => b.tools)} color={kindColorVar('tool')} />} />
       <Kpi testid="kpi-mcp" label="MCP calls" value={formatCount(a.mcpCalls)} sub={`${stats.mcpServers.length} servers`} spark={<Sparkline values={hist.map((b) => b.mcp)} color={kindColorVar('mcp')} />} />
       <Kpi testid="kpi-files" label="Files changed" value={formatCount(a.filesTouched)} sub={`${a.fileChanges} changes`} spark={<Sparkline values={hist.map((b) => b.edits)} color={kindColorVar('file-change')} />} />
-      <Kpi testid="kpi-tokens" label="Tokens" value={formatTokens(total)} sub={`${formatTokens(t.input)} in · ${formatTokens(t.output)} out`} title={`Input ${t.input.toLocaleString()} · Output ${t.output.toLocaleString()} · Reasoning ${t.reasoning.toLocaleString()} · Cache read ${t.cacheRead.toLocaleString()} · Cache write ${t.cacheWrite.toLocaleString()}`} />
-      <Kpi testid="kpi-cost" label="Cost" value={formatCost(stats.cost)} sub={`${ss.total} sessions`} />
+      {u && ut ? (
+        <Kpi testid="kpi-tokens" label="Tokens" value={<Odometer value={uTotal} format="tokens" size="lg" />}
+          sub={<span data-testid="kpi-tokens-lifetime">lifetime of sessions active in window: {formatTokens(total)}</span>}
+          spark={link}
+          title={`Consumed in window: input ${ut.input.toLocaleString()} · output ${ut.output.toLocaleString()} · reasoning ${ut.reasoning.toLocaleString()} · cache read ${ut.cacheRead.toLocaleString()} · cache write ${ut.cacheWrite.toLocaleString()}`} />
+      ) : (
+        <Kpi testid="kpi-tokens" label="Tokens" value={formatTokens(total)} sub={`${formatTokens(t.input)} in · ${formatTokens(t.output)} out`} spark={link} title={`Input ${t.input.toLocaleString()} · Output ${t.output.toLocaleString()} · Reasoning ${t.reasoning.toLocaleString()} · Cache read ${t.cacheRead.toLocaleString()} · Cache write ${t.cacheWrite.toLocaleString()}`} />
+      )}
+      {u ? (
+        <Kpi testid="kpi-cost" label="Cost" value={u.costedCalls > 0 ? <Odometer value={u.cost} format="cost" size="lg" /> : 'not reported'}
+          sub={<span data-testid="kpi-cost-lifetime">lifetime of sessions active in window: {formatCost(stats.cost)}</span>} />
+      ) : (
+        <Kpi testid="kpi-cost" label="Cost" value={formatCost(stats.cost)} sub={`${ss.total} sessions`} />
+      )}
     </div>
   )
 }

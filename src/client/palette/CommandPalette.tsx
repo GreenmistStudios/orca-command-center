@@ -1,6 +1,6 @@
 import { Command } from 'cmdk'
 import { Dialog } from 'radix-ui'
-import { Activity, BellRing, Clipboard, FileDiff, FolderGit2, GitBranch, Keyboard, LayoutDashboard, Moon, Radio, Search, SquareChartGantt, Waypoints, X, type LucideIcon } from 'lucide-react'
+import { Activity, BellRing, Clipboard, FileDiff, FolderGit2, GitBranch, Keyboard, Coins, LayoutDashboard, Moon, Radio, Search, SquareChartGantt, Waypoints, X, type LucideIcon } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { formatRelative } from '../lib/format'
 import { selectWorkspaceGroups } from '../state/selectors'
@@ -16,6 +16,7 @@ const VIEW_ITEMS: Array<{ id: ViewId; label: string; icon: LucideIcon; key: stri
   { id: 'stream', label: 'Stream', icon: Activity, key: '3' },
   { id: 'changes', label: 'Changes', icon: FileDiff, key: '4' },
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, key: '5' },
+  { id: 'tokens', label: 'Tokens', icon: Coins, key: '6' },
 ]
 
 const itemCls = 'data-[selected=true]:bg-selection/15 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs outline-none'
@@ -177,6 +178,10 @@ function PaletteBody() {
         </Command.Group>
 
         <Command.Group heading="Actions" className={groupCls}>
+          {state().ui.selectedSessionId && (
+            <Row testId="palette-action-workflow-tokens" value="action:workflow-tokens" keywords={['token', 'usage', 'cost', 'workflow']} icon={<Coins size={13} className="text-muted-foreground" />} label="Token usage for this workflow" onSelect={run(() => { state().setTokensPrefs({ scope: 'workflow' }); state().setView('tokens') })} />
+          )}
+          <Row testId="palette-action-fleet-tokens" value="action:fleet-tokens" keywords={['token', 'usage', 'cost', 'burn', 'fleet']} icon={<Coins size={13} className="text-muted-foreground" />} label="Fleet token usage" onSelect={run(() => { state().setTokensPrefs({ scope: 'fleet' }); state().setView('tokens') })} />
           <Row testId="palette-action-theme" value="action:theme" keywords={['dark', 'light', 'toggle theme']} icon={<Moon size={13} className="text-muted-foreground" />} label="Toggle theme" hint={<Kbd>t</Kbd>} onSelect={run(toggleTheme)} />
           <Row testId="palette-action-live" value="action:live" keywords={['live only', 'filter']} icon={<Radio size={13} className="text-muted-foreground" />} label="Toggle Live only" hint={<Kbd>.</Kbd>} onSelect={run(() => state().setLiveOnly(!state().ui.liveOnly))} />
           <Row testId="palette-action-follow" value="action:follow" keywords={['stream', 'follow', 'tail']} icon={<Activity size={13} className="text-muted-foreground" />} label="Toggle stream follow" hint={<Kbd>f</Kbd>} onSelect={run(() => state().setStreamFilters({ follow: !state().ui.streamFilters.follow }))} />

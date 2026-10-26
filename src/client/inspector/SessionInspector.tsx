@@ -10,8 +10,9 @@ import { FilesTab } from './FilesTab'
 import { InfoTab } from './InfoTab'
 import { TodosTab } from './TodosTab'
 import { Transcript } from './Transcript'
+import { UsageTab, usageTabLabel } from './UsageTab'
 
-type Tab = 'activity' | 'files' | 'todos' | 'info'
+type Tab = 'activity' | 'usage' | 'files' | 'todos' | 'info'
 const tabMemory: Record<'root' | 'subagent', Tab> = { root: 'activity', subagent: 'activity' }
 
 export function provenanceText(s: SessionSummary, now = Date.now()): string {
@@ -119,6 +120,7 @@ export function SessionInspector({ id }: { id: string }) {
           onChange={setTab}
           options={[
             { value: 'activity', label: 'Activity' },
+            { value: 'usage', label: usageTabLabel(session) },
             { value: 'files', label: 'Files', count: files },
             { value: 'todos', label: todos.length ? `Todos ${done}/${todos.length}` : 'Todos' },
             { value: 'info', label: 'Info' },
@@ -129,7 +131,7 @@ export function SessionInspector({ id }: { id: string }) {
       {tab === 'activity' && <Transcript sessionId={id} live={session.live} onOpenTodos={() => setTab('todos')} />}
       {tab !== 'activity' && (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {!detail && tab !== 'info' ? <Skeleton /> : tab === 'files' ? <FilesTab sessionId={id} /> : tab === 'todos' ? <TodosTab sessionId={id} /> : <InfoTab sessionId={id} />}
+          {tab === 'usage' ? <UsageTab session={session} /> : !detail && tab !== 'info' ? <Skeleton /> : tab === 'files' ? <FilesTab sessionId={id} /> : tab === 'todos' ? <TodosTab sessionId={id} /> : <InfoTab sessionId={id} />}
         </div>
       )}
     </div>

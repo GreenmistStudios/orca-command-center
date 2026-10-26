@@ -74,4 +74,25 @@ describe('Rail', () => {
     // mock fleet has live roots, so the list is non-empty
     expect(rootIds().length).toBeGreaterThan(0)
   })
+
+  it('root rows show tree cost, in/out micro bar and in-flight shimmer', () => {
+    const b = mockBootstrap()
+    const root = b.sessions.find((x) => x.parentId == null)!
+    for (const x of b.sessions) if (x.usage) x.usage = { ...x.usage, inFlight: null }
+    const tok = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+    root.usage = {
+      calls: 3, inflow: 750, outflow: 250, aiu: 0, cacheHitRate: null, rates: null, inFlight: null,
+      tree: { sessions: 1, calls: 3, tokens: tok, inflow: 750, outflow: 250, cost: 3.5, costedCalls: 3, aiu: 0 },
+    }
+    renderWithMockStore(<Rail />, { bootstrap: b })
+    const row = screen.getAllByTestId('rail-root-row').find((r) => r.getAttribute('data-session-id') === root.id)!
+    expect(within(row).getByTestId('rail-cost').textContent).toContain('3.50')
+    expect(within(row).getByTestId('rail-flow-bar').getAttribute('data-inflow-share')).toBe('0.750')
+    expect(within(row).queryByTestId('rail-shimmer')).toBeNull()
+    act(() => useOcc.setState((st) => ({
+      sessions: { ...st.sessions, [root.id]: { ...st.sessions[root.id], usage: { ...st.sessions[root.id].usage!, inFlight: { startedAt: 1 } as never } } },
+    })))
+    const row2 = screen.getAllByTestId('rail-root-row').find((r) => r.getAttribute('data-session-id') === root.id)!
+    expect(within(row2).getByTestId('rail-shimmer')).toBeTruthy()
+  })
 })

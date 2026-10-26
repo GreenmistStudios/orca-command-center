@@ -81,4 +81,20 @@ describe('sortScoreboard', () => {
   it('sorts by title asc', () => {
     expect(sortScoreboard([mk('b', true, 1), mk('a', false, 1)], 'title', 'asc').map((s) => s.id)).toEqual(['a', 'b'])
   })
+
+  it('Tokens and Cost tiles use window usage and keep lifetime numbers in the sub-line', () => {
+    const b = mockBootstrap()
+    const z = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+    b.stats.usage = {
+      totals: { calls: 1, tokens: { ...z, input: 1000, output: 234 }, inflow: 1000, outflow: 234, cost: 1.25, costedCalls: 1, aiu: 0, cacheHitRate: null, firstTs: 1, lastTs: 2 },
+      rates: { windowMs: 300000, asOf: 1, inflowPerMin: 0, outflowPerMin: 0, costPerHour: 0, callsPerMin: 0 },
+    }
+    renderWithMockStore(<OverviewView />, { bootstrap: b })
+    expect(screen.getByTestId('kpi-tokens-value').textContent).toContain('1.2')
+    expect(screen.getByTestId('kpi-cost-value').textContent).toContain('1.25')
+    expect(screen.getByTestId('kpi-cost-lifetime').textContent).toContain('lifetime of sessions active in window')
+    expect(screen.getByTestId('kpi-tokens-lifetime').textContent).toContain('lifetime')
+    fireEvent.click(screen.getByTestId('view-token-flow'))
+    expect(useOcc.getState().ui.view).toBe('tokens')
+  })
 })

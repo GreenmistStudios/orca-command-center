@@ -7,6 +7,9 @@ import { formatCost, formatDuration, formatRelative } from '../../lib/format'
 import { agentColorVar, AgentMonogram, STATE_LABEL, stateTone, toneClasses, useSpotlight } from '../../ui'
 import type { Direction, TaskInfo } from './model'
 import type { OrchTask } from '../../../shared/contract'
+import { useFlowMotion } from '../../ui/flow'
+import type { EdgeFlowData, NodeFlowData } from './overlay'
+import { CostTicker, EdgeParticles, NodeFlowOverlay } from './FlowOverlay'
 
 export interface SessionNodeData extends Record<string, unknown> {
   s: SessionSummary
@@ -14,6 +17,8 @@ export interface SessionNodeData extends Record<string, unknown> {
   dimmed: boolean
   direction: Direction
   now: number
+  /** Token-flow overlay data; absent when the overlay is off. */
+  flow?: NodeFlowData
 }
 
 export interface TaskNodeData extends Record<string, unknown> {
@@ -23,6 +28,8 @@ export interface TaskNodeData extends Record<string, unknown> {
   selected: boolean
   direction: Direction
   now: number
+  /** Assignee session cost (overlay on, usage known). */
+  cost?: number | null
 }
 
 const handles = (d: Direction) => (d === 'RIGHT' ? [Position.Left, Position.Right] : [Position.Top, Position.Bottom])
@@ -38,7 +45,7 @@ function Handles({ direction }: { direction: Direction }) {
 }
 
 function SessionNodeImpl({ data }: NodeProps) {
-  const { s, selected, dimmed, direction, now } = data as SessionNodeData
+  const { s, selected, dimmed, direction, now, flow } = data as SessionNodeData
   const tone = stateTone(s.state)
   const tc = toneClasses(tone)
   const accent = tc.accentVar
@@ -67,6 +74,7 @@ function SessionNodeImpl({ data }: NodeProps) {
       style={{ width: 264, height: 96, boxShadow: `${glow}inset 0 1px 0 0 var(--sheen), var(--lift-2)` }}
     >
       <Handles direction={direction} />
+      {flow && <NodeFlowOverlay s={s} shares={flow} />}
       {working && <span className="orca-alive pointer-events-none" aria-hidden />}
       {pulse > 0 && (
         <span
@@ -87,9 +95,11 @@ function SessionNodeImpl({ data }: NodeProps) {
       </div>
       <div className="relative line-clamp-2 text-[11.5px] leading-snug font-medium">{s.title}</div>
       <div className="relative mt-auto truncate font-mono text-[9.5px] opacity-70">
-        {s.live && s.current
-          ? `▸ ${s.current.label}${s.current.detail ? ` · ${s.current.detail}` : ''}`
-          : c ? `${c.tools} tools · ${c.fileChanges} files · ${formatCost(s.cost)}` : formatCost(s.cost)}
+        {flow && s.usage
+          ? <CostTicker cost={s.cost ?? 0} prefix={s.live && s.current ? `▸ ${s.current.label}${s.current.detail ? ` · ${s.current.detail}` : ''} ·` : undefined} />
+          : s.live && s.current
+            ? `▸ ${s.current.label}${s.current.detail ? ` · ${s.current.detail}` : ''}`
+            : c ? `${c.tools} tools · ${c.fileChanges} files · ${formatCost(s.cost)}` : formatCost(s.cost)}
       </div>
     </motion.div>
   )
@@ -97,7 +107,7 @@ function SessionNodeImpl({ data }: NodeProps) {
 export const SessionNode = memo(SessionNodeImpl)
 
 function TaskNodeImpl({ data }: NodeProps) {
-  const { task, info, assignee, selected, direction, now } = data as TaskNodeData
+  const { task, info, assignee, selected, direction, now, cost } = data as TaskNodeData
   const tc = toneClasses(info.tone)
   const stale = info.lastSeen !== null && (info.tone === 'dispatched') && now - info.lastSeen > 10 * 60_000
   return (
@@ -123,23 +133,27 @@ function TaskNodeImpl({ data }: NodeProps) {
       </div>
       <div className="line-clamp-2 text-[11.5px] leading-snug font-medium">{task.title}</div>
       {info.lastSeen !== null && (
-        <div className={cn('mt-auto text-[9px] opacity-70', stale && 'text-amber-500 font-bold opacity-100')}>
-          last seen {formatRelative(info.lastSeen, now)}
+        <div className={cn('mt-auto flex items-center justify-between text-[9px] opacity-70', stale && 'text-amber-500 font-bold opacity-100')}>
+          <span>last seen {formatRelative(info.lastSeen, now)}</span>
+          {cost != null && <CostTicker cost={cost} className="font-mono" />}
         </div>
       )}
+      {info.lastSeen === null && cost != null && <div className="mt-auto text-[9px] opacity-70"><CostTicker cost={cost} className="font-mono" /></div>}
     </div>
   )
 }
 export const TaskNode = memo(TaskNodeImpl)
 
-export interface DagEdgeData extends Record<string, unknown> { label: string | null; style: { stroke: string; strokeWidth: number; strokeDasharray?: string; opacity: number } }
+export interface DagEdgeData extends Record<string, unknown> { label: string | null; flow?: EdgeFlowData; style: { stroke: string; strokeWidth: number; strokeDasharray?: string; opacity: number } }
 
 export function DagEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data }: EdgeProps) {
   const d = data as DagEdgeData | undefined
   const [path] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
+  const { reduced } = useFlowMotion()
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={d?.style} />
+      {d?.flow && <EdgeParticles path={path} flow={d.flow} reduced={reduced} />}
       <path d={path} fill="none" stroke="transparent" strokeWidth={14} pointerEvents="stroke">
         {d?.label && <title>{d.label}</title>}
       </path>
