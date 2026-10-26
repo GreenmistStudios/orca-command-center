@@ -11,6 +11,7 @@ export const FAKE_TOKEN = 'ghp_' + 'FAKEdecoyTokenThatMustNeverAppear0123456789'
 export const FAKE_COMMAND_SECRET = 'ghp_' + 'FAKEsecretInsideCommand0123456789ABCDEF'
 export const ENCRYPTED_SENTINEL = 'ENCRYPTED-CONTENT-SENTINEL'
 export const OPAQUE_SENTINEL = 'REASONING-OPAQUE-SENTINEL'
+export const SECRET_PROMPT_SENTINEL = 'SECRET_PROMPT_SENTINEL'
 export const DEAD_PID = 999999
 
 export interface RawEvent {
@@ -67,7 +68,9 @@ export interface CopilotFixture {
     autoMode(chosen: string): RawEvent
     error(message: string): RawEvent
     abort(reason: string): RawEvent
-    shutdown(): RawEvent
+    shutdown(o?: { systemTokens?: number; toolDefinitionsTokens?: number; conversationTokens?: number; totalApiDurationMs?: number }): RawEvent
+    modelCallStarted(o?: { model?: string; turn?: number }): RawEvent
+    modelCallSuccess(o: { prompt: number; cached?: number; completion: number; reasoning?: number; nanoAiu?: number; ttftMs?: number; durationMs?: number; model?: string; callId?: string; turn?: number; cacheWrite?: number }): RawEvent
   }
 }
 
@@ -166,7 +169,44 @@ export function createCopilotFixture(root: string, opts: { startMs?: number } = 
     autoMode: (chosen) => event('session.auto_mode_resolved', { chosenModel: chosen, routingMethod: 'router' }),
     error: (message) => event('session.error', { errorType: 'query', message }),
     abort: (reason) => event('abort', { reason }),
-    shutdown: () => event('session.shutdown', { shutdownType: 'routine', totalPremiumRequests: 1 }),
+    shutdown: (o = {}) => event('session.shutdown', { shutdownType: 'routine', totalPremiumRequests: 1, ...o }),
+    modelCallStarted: (o = {}) =>
+      event('model.model_call_started', { kind: 'panel', model: o.model ?? 'claude-sonnet-5.5', modelInfo: { id: o.model ?? 'claude-sonnet-5.5', big: SECRET_PROMPT_SENTINEL }, timestampMs: clockMs + 1000, turn: o.turn ?? 0 }),
+    modelCallSuccess: (o) =>
+      event('model.model_call_success', {
+        callId: o.callId ?? `call-${n + 1}`,
+        clientRequestId: 'creq',
+        copilotUsage: {
+          token_details: [
+            { batch_size: 1000000, cost_per_batch: 0, model: o.model ?? 'claude-sonnet-5.5', token_count: Math.max(0, o.prompt - (o.cached ?? 0) - (o.cacheWrite ?? 0)), token_type: 'input' },
+            { batch_size: 1000000, cost_per_batch: 0, model: o.model ?? 'claude-sonnet-5.5', token_count: o.cached ?? 0, token_type: 'cache_read' },
+            { batch_size: 1000000, cost_per_batch: 0, model: o.model ?? 'claude-sonnet-5.5', token_count: o.cacheWrite ?? 0, token_type: 'cache_write' },
+            { batch_size: 1000000, cost_per_batch: 0, model: o.model ?? 'claude-sonnet-5.5', token_count: o.completion, token_type: 'output' },
+          ],
+          ...(o.nanoAiu === undefined ? {} : { total_nano_aiu: o.nanoAiu }),
+        },
+        interTokenLatencyMs: 5,
+        kind: 'panel',
+        modelCall: { model: o.model ?? 'claude-sonnet-5.5' },
+        modelCallDurationMs: o.durationMs ?? 2000,
+        outputTtftMs: o.ttftMs ?? 300,
+        quotaSnapshots: { premium_interactions: { entitlement: 300, remaining: 123456, secret: SECRET_PROMPT_SENTINEL } },
+        requestId: 'req',
+        requestMessages: [{ role: 'user', content: `${SECRET_PROMPT_SENTINEL} ${'x'.repeat(2000)}` }],
+        requestSettings: { temperature: 1 },
+        responseChunk: { choices: [{ delta: { content: SECRET_PROMPT_SENTINEL } }] },
+        responseUsage: {
+          prompt_tokens: o.prompt,
+          prompt_tokens_details: { cached_tokens: o.cached ?? 0 },
+          completion_tokens: o.completion,
+          completion_tokens_details: { accepted_prediction_tokens: 0, rejected_prediction_tokens: 0, ...(o.reasoning === undefined ? {} : { reasoning_tokens: o.reasoning }) },
+          total_tokens: o.prompt + o.completion,
+        },
+        rte: SECRET_PROMPT_SENTINEL,
+        toolCount: 3,
+        ttftMs: o.ttftMs ?? 300,
+        turn: o.turn ?? 0,
+      }),
   }
 
   const fx: CopilotFixture = {
@@ -271,6 +311,10 @@ export function seedCopilotFleet(root: string, opts: { now?: number } = {}): Cop
       e.toolComplete(calls.mcp, { result: { content: '{"title":"Login broken","html_url":"https://github.com/acme/repo/issues/42"}' } }),
       e.toolStart(calls.failed, 'bash', { command: 'false' }),
       e.toolComplete(calls.failed, { success: false, error: { message: 'exit code 1' } }),
+      e.modelCallStarted({ turn: 0 }),
+      e.modelCallSuccess({ prompt: 1000, cached: 400, completion: 120, reasoning: 20, nanoAiu: 2_000_000_000, ttftMs: 350, durationMs: 3000, callId: 'mc-1', turn: 0 }),
+      e.modelCallStarted({ turn: 1 }),
+      e.modelCallSuccess({ prompt: 1500, cached: 1000, completion: 80, nanoAiu: 1_000_000_000, ttftMs: 200, durationMs: 1500, callId: 'mc-2', turn: 1 }),
       e.assistant('1', { content: 'Fixed the bug.' }),
       e.turnEnd('1'),
       e.usage(3),
@@ -285,6 +329,9 @@ export function seedCopilotFleet(root: string, opts: { now?: number } = {}): Cop
       e.sessionStart({ model: 'gpt-5', cwd: '/work/other' }),
       e.user('Run the full test suite'),
       e.turnStart('1'),
+      e.modelCallStarted({ model: 'gpt-5', turn: 0 }),
+      e.modelCallSuccess({ prompt: 500, cached: 0, completion: 50, nanoAiu: 500_000_000, durationMs: 1000, callId: 'mc-live-1', model: 'gpt-5', turn: 0 }),
+      e.modelCallStarted({ model: 'gpt-5', turn: 1 }),
       e.assistant('1', { reasoning: 'Running tests.', model: 'gpt-5' }),
       e.toolStart(liveBashCall, 'bash', { command: 'npm run test:all', description: 'Run all tests' }, { model: 'gpt-5' }),
       e.permRequested(livePermissionRequest, { toolCallId: liveBashCall, kind: 'shell', command: 'npm run test:all' }),

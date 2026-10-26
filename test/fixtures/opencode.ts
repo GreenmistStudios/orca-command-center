@@ -112,6 +112,21 @@ export interface PartInput {
   updated?: number
 }
 
+export interface StepStartInput {
+  id: string
+  messageId: string
+  sessionId: string
+  created?: number
+}
+
+export interface StepFinishInput extends StepStartInput {
+  tokens?: { input?: number; output?: number; reasoning?: number; cacheRead?: number; cacheWrite?: number } | null
+  cost?: number | null
+  reason?: string
+  /** Extra/override fields merged into the part `data` (e.g. to drop `cost`). */
+  extra?: Record<string, unknown>
+}
+
 export interface OpenCodeFixture {
   path: string
   /** Writable connection — test-only. */
@@ -120,6 +135,12 @@ export interface OpenCodeFixture {
   updateSession(id: string, patch: { title?: string; updated?: number; cost?: number }): void
   addMessage(m: MessageInput): void
   addPart(p: PartInput): void
+  /** Add a `step-start` part. */
+  addStepStart(p: StepStartInput): void
+  /** Add a `step-finish` part (tokens default 0; `cost: null` omits the field). */
+  addStepFinish(p: StepFinishInput): void
+  /** Replace the text of a text/reasoning part and append its `message.part.updated.1` event (streaming growth). Returns the event rowid. */
+  appendTextGrowth(partId: string, text: string, time?: number): number
   /** Update the `data` of an existing part (and its time_updated). */
   updatePart(id: string, data: Record<string, unknown>, updated?: number): void
   /** Insert an event row; returns its rowid. */
@@ -231,6 +252,30 @@ export function createOpenCodeFixture(dir: string, fileName = 'opencode.db'): Op
         p.updated ?? created,
         JSON.stringify({ ...p.data }),
       )
+    },
+    addStepStart(p) {
+      fixture.addPart({ id: p.id, messageId: p.messageId, sessionId: p.sessionId, created: p.created, data: { type: 'step-start', snapshot: 'snap' } })
+    },
+    addStepFinish(p) {
+      const t = p.tokens === null ? null : (p.tokens ?? {})
+      const data: Record<string, unknown> = { type: 'step-finish', reason: p.reason ?? 'tool-calls' }
+      if (t) {
+        const [i, o, r, cr, cw] = [t.input ?? 0, t.output ?? 0, t.reasoning ?? 0, t.cacheRead ?? 0, t.cacheWrite ?? 0]
+        data['tokens'] = { total: i + o + r + cr + cw, input: i, output: o, reasoning: r, cache: { read: cr, write: cw } }
+      }
+      if (p.cost !== null) data['cost'] = p.cost ?? 0
+      fixture.addPart({ id: p.id, messageId: p.messageId, sessionId: p.sessionId, created: p.created, data: { ...data, ...(p.extra ?? {}) } })
+    },
+    appendTextGrowth(partId, text, time) {
+      const row = db.prepare('SELECT * FROM part WHERE id = ?').get(partId) as Record<string, any>
+      const data = { ...JSON.parse(row.data), text }
+      const t = time ?? Date.now()
+      run('UPDATE part SET data = ?, time_updated = ? WHERE id = ?', JSON.stringify(data), t, partId)
+      return fixture.appendEvent({
+        aggregateId: row.session_id,
+        type: 'message.part.updated.1',
+        data: { sessionID: row.session_id, part: { ...data, id: row.id, sessionID: row.session_id, messageID: row.message_id }, time: t },
+      })
     },
     updatePart(id, data, updated) {
       run('UPDATE part SET data = ?, time_updated = ? WHERE id = ?', JSON.stringify(data), updated ?? Date.now(), id)
@@ -426,6 +471,8 @@ export function seedRealisticFleet(fixture: OpenCodeFixture, now: number): { eve
     directory: '/repo/old',
     created: t(3 * 86400 + 600),
     updated: t(3 * 86400),
+    cost: 0.2,
+    tokens: { input: 1, output: 9 },
   })
 
   /* ---- root: user message ---- */
@@ -660,6 +707,22 @@ export function seedRealisticFleet(fixture: OpenCodeFixture, now: number): { eve
     },
   })
   fixture.addPart({
+    id: 'prt_d00_step_start',
+    messageId: 'msg_d01_assistant',
+    sessionId: FLEET.childDone,
+    created: t(499),
+    data: { type: 'step-start', snapshot: 'snapd' },
+  })
+  fixture.addStepFinish({
+    id: 'prt_d03_step_finish',
+    messageId: 'msg_d01_assistant',
+    sessionId: FLEET.childDone,
+    created: t(300),
+    tokens: { input: 10, output: 200 },
+    cost: 0.1,
+    reason: 'stop',
+  })
+  fixture.addPart({
     id: P.childDoneText,
     messageId: 'msg_d01_assistant',
     sessionId: FLEET.childDone,
@@ -736,6 +799,8 @@ export function seedRealisticFleet(fixture: OpenCodeFixture, now: number): { eve
       modelID: 'claude-opus-5.5', providerID: 'github-copilot', time: { created: t(3 * 86400 + 590), completed: t(3 * 86400) }, finish: 'stop',
     },
   })
+  fixture.addStepStart({ id: 'prt_g00_step_start', messageId: 'msg_g01_assistant', sessionId: FLEET.rootOld, created: t(3 * 86400 + 590) })
+  fixture.addStepFinish({ id: 'prt_g03_step_finish', messageId: 'msg_g01_assistant', sessionId: FLEET.rootOld, created: t(3 * 86400), tokens: { input: 1, output: 9 }, cost: 0.2, reason: 'stop' })
   fixture.addPart({
     id: 'prt_g02_text',
     messageId: 'msg_g01_assistant',

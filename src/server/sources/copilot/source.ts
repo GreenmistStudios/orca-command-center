@@ -11,6 +11,8 @@ import {
   type SourceHealth,
   type ToolStat,
   type TranscriptPage,
+  type UsageEstimate,
+  type UsageSample,
 } from '../../../shared/contract.js'
 import type { ActivityQueryOptions, HarnessSession, HarnessSource, HarnessUpdate, SourceDeps, Unsubscribe } from '../../types.js'
 import { watchDirectory, type Watcher } from '../../lib/fs-watch.js'
@@ -173,6 +175,7 @@ export function createCopilotSource(deps: SourceDeps, options: CopilotSourceOpti
     e.mtimeMs = mtime
     e.model = model
     model.drain()
+    model.dropHistoricalUsage()
     if (model.copilotVersion) version = model.copilotVersion
     return model
   }
@@ -279,7 +282,12 @@ export function createCopilotSource(deps: SourceDeps, options: CopilotSourceOpti
     const changedSessions = new Map<string, HarnessSession>()
     const changedEvents = new Map<string, ActivityEvent>()
     let reset: string | null = removed.length ? 'session directory removed' : null
+    const usageSamples: UsageSample[] = []
+    const usageEstimates = new Map<string, UsageEstimate>()
     const collect = (m: SessionModel, all = false) => {
+      const u = m.drainUsage()
+      usageSamples.push(...u.samples)
+      for (const est of u.estimates) usageEstimates.set(est.sessionId, est)
       changedSessions.set(m.id, m.toSession())
       for (const id of m.drain()) {
         const ev = m.events.get(id)
@@ -354,6 +362,7 @@ export function createCopilotSource(deps: SourceDeps, options: CopilotSourceOpti
     if (initial) return
     if (reset) emit({ type: 'reset', reason: reset })
     if (changedSessions.size) emit({ type: 'sessions', sessions: [...changedSessions.values()] })
+    if (usageSamples.length || usageEstimates.size) emit({ type: 'usage', samples: usageSamples, estimates: [...usageEstimates.values()] })
     if (changedEvents.size) {
       const events = [...changedEvents.values()].sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1))
       emit({ type: 'activity', events })
@@ -481,6 +490,16 @@ export function createCopilotSource(deps: SourceDeps, options: CopilotSourceOpti
         }
       }
       return [...map.values()].sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name))
+    },
+
+    getUsageSamples(sessionIds, opts) {
+      const out: UsageSample[] = []
+      for (const sid of sessionIds) {
+        const m = modelOf(sid)
+        if (!m) continue
+        for (const u of m.samples.values()) if (opts?.sinceMs === undefined || u.ts >= opts.sinceMs) out.push(u)
+      }
+      return out.sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1))
     },
 
     getTodos() {

@@ -12,6 +12,8 @@ import {
   type SessionCounters,
   type ToolCallInfo,
   type TranscriptMessage,
+  type UsageEstimate,
+  type UsageSample,
 } from '../../../shared/contract.js'
 import type { HarnessSession } from '../../types.js'
 import { redactText, redactValue } from '../../lib/redact.js'
@@ -101,6 +103,11 @@ export class SessionModel {
   private lastPrompt: string | null = null
   private lastMessage: string | null = null
   private currentTurn: string | null = null
+  readonly samples = new Map<string, UsageSample>()
+  private readonly callStarts = new Map<string, number>()
+  private inFlightSince: number | null = null
+  private usageOut: { samples: UsageSample[]; estimates: UsageEstimate[] } = { samples: [], estimates: [] }
+  private shutdownFacts: Array<{ label: string; value: string }> = []
   private readonly pending = new Map<string, { ts: number; label: string }>()
   private readonly running = new Map<string, number>()
 
@@ -113,6 +120,97 @@ export class SessionModel {
     const out = [...this.touched]
     this.touched = new Set()
     return out
+  }
+
+  drainUsage(): { samples: UsageSample[]; estimates: UsageEstimate[] } {
+    const out = this.usageOut
+    this.usageOut = { samples: [], estimates: [] }
+    return out
+  }
+
+  /** After a full parse: forget replayed history, keep only a still-open in-flight estimate. */
+  dropHistoricalUsage(): void {
+    this.usageOut = { samples: [], estimates: [] }
+    if (this.inFlightSince !== null) this.estimate(true, this.inFlightSince, this.lastTs)
+  }
+
+  private estimate(inFlight: boolean, startedAt: number, ts: number): void {
+    this.usageOut.estimates.push({ sessionId: this.id, rootId: null, harness: 'copilot', startedAt, updatedAt: ts, estOutputTokens: 0, inFlight })
+  }
+
+  private endInFlight(ts: number): void {
+    if (this.inFlightSince === null) return
+    this.estimate(false, this.inFlightSince, ts)
+    this.inFlightSince = null
+  }
+
+  private callStarted(d: Obj, ts: number): void {
+    const started = typeof d.timestampMs === 'number' ? d.timestampMs : ts
+    const turn = d.turn === undefined || d.turn === null ? null : String(d.turn)
+    if (turn !== null) this.callStarts.set(turn, started)
+    this.inFlightSince = started
+    this.estimate(true, started, ts)
+  }
+
+  private callSuccess(d: Obj, ts: number, eid: string): void {
+    const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+    const usage = isObj(d.responseUsage) ? d.responseUsage : {}
+    const ptd = isObj(usage.prompt_tokens_details) ? usage.prompt_tokens_details : {}
+    const ctd = isObj(usage.completion_tokens_details) ? usage.completion_tokens_details : {}
+    const cu = isObj(d.copilotUsage) ? d.copilotUsage : {}
+    let cacheWrite = 0
+    if (Array.isArray(cu.token_details)) {
+      for (const t of cu.token_details) if (isObj(t) && t.token_type === 'cache_write') cacheWrite += Math.max(0, num(t.token_count) ?? 0)
+    }
+    const cacheRead = Math.max(0, num(ptd.cached_tokens) ?? 0)
+    const prompt = num(usage.prompt_tokens) ?? 0
+    const completion = num(usage.completion_tokens) ?? 0
+    const reasoning = Math.max(0, num(ctd.reasoning_tokens) ?? 0)
+    const duration = num(d.modelCallDurationMs)
+    const turn = d.turn === undefined || d.turn === null ? null : String(d.turn)
+    const started = turn !== null ? this.callStarts.get(turn) : undefined
+    if (turn !== null) this.callStarts.delete(turn)
+    const mc = isObj(d.modelCall) ? d.modelCall : {}
+    const modelId = str(mc.model) ?? str(d.model)
+    const nano = num(isObj(d.copilotUsage) ? cu.total_nano_aiu : null)
+    const callId = str(d.callId) ?? eid
+    const sample: UsageSample = {
+      id: `copilot:${this.id}:call:${callId}`,
+      harness: 'copilot',
+      sessionId: this.id,
+      rootId: null,
+      ledgerSeq: 0,
+      ts,
+      startTs: started ?? (duration !== null ? ts - duration : null),
+      model: modelId ? { providerId: 'github-copilot', modelId } : null,
+      agent: 'copilot',
+      // prompt_tokens includes cache reads and writes (matches session.shutdown tokenDetails.input)
+      tokens: { input: Math.max(0, prompt - cacheRead - cacheWrite), output: Math.max(0, completion - reasoning), reasoning, cacheRead, cacheWrite },
+      cost: null,
+      aiu: nano === null ? null : nano / 1e9,
+      ttftMs: num(d.ttftMs),
+      durationMs: duration,
+      finish: null,
+      source: 'copilot.model_call_success',
+    }
+    if (modelId) this.lastModel = this.lastModel ?? modelId
+    this.samples.set(sample.id, sample)
+    this.usageOut.samples.push(sample)
+    this.estimate(false, this.inFlightSince ?? sample.startTs ?? ts, ts)
+    this.inFlightSince = null
+  }
+
+  private shutdownInfo(d: Obj): void {
+    const n = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+    const f: Array<{ label: string; value: string }> = []
+    const sys = n(d.systemTokens)
+    const tools = n(d.toolDefinitionsTokens)
+    const conv = n(d.conversationTokens)
+    const fmt = (v: number | null) => (v === null ? '?' : v.toLocaleString('en-US'))
+    if (sys !== null || tools !== null || conv !== null) f.push({ label: 'Context (system · tools · conversation)', value: `${fmt(sys)} · ${fmt(tools)} · ${fmt(conv)}` })
+    const api = n(d.totalApiDurationMs)
+    if (api !== null) f.push({ label: 'API time', value: `${api} ms` })
+    this.shutdownFacts = f
   }
 
   get copilotVersion(): string | null {
@@ -181,6 +279,7 @@ export class SessionModel {
       case 'assistant.turn_end': {
         this.endSeq = this.seq
         this.turnsEnded++
+        this.endInFlight(ts)
         const g = this.groups.get(`turn:${str(d.turnId) ?? this.currentTurn}`)
         if (g) {
           g.completedAt = ts
@@ -236,7 +335,13 @@ export class SessionModel {
       case 'session.auto_mode_resolved':
         this.routed = str(d.chosenModel) ?? this.routed
         return
+      case 'model.model_call_started':
+        return this.callStarted(d, ts)
+      case 'model.model_call_success':
+        return this.callSuccess(d, ts, eid)
       case 'session.shutdown':
+        this.shutdownInfo(d)
+        this.endInFlight(ts)
         this.stopSeq = this.seq
         this.pending.clear()
         this.running.clear()
@@ -244,6 +349,7 @@ export class SessionModel {
       case 'session.error':
       case 'abort': {
         this.errSeq = this.seq
+        this.endInFlight(ts)
         this.pending.clear()
         this.running.clear()
         const msg = str(d.message) ?? str(d.reason) ?? type
@@ -571,6 +677,15 @@ export class SessionModel {
     if (this.version) facts.push({ label: 'Copilot version', value: this.version })
     if (this.premium) facts.push({ label: 'Premium requests', value: this.premium })
     if (this.routed) facts.push({ label: 'Model routing', value: this.routed })
+    facts.push(...this.shutdownFacts)
+    const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+    for (const u of this.samples.values()) {
+      tokens.input += u.tokens.input
+      tokens.output += u.tokens.output
+      tokens.reasoning += u.tokens.reasoning
+      tokens.cacheRead += u.tokens.cacheRead
+      tokens.cacheWrite += u.tokens.cacheWrite
+    }
     return {
       id: this.id,
       harness: 'copilot',
@@ -583,7 +698,7 @@ export class SessionModel {
       updatedAt,
       lastActivityAt: this.lastTs || null,
       archivedAt: null,
-      tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      tokens,
       cost: 0,
       spawn: null,
       transcriptState: this.state(),

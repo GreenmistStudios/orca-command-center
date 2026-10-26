@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ActivityEvent } from '../../../shared/contract.js'
+import type { ActivityEvent, UsageEstimate, UsageSample } from '../../../shared/contract.js'
 import { openReadOnly, OPENCODE_DENIED_TABLES, type ReadOnlyDb } from '../../lib/sqlite.js'
 import type { HarnessUpdate, Logger } from '../../types.js'
 import {
@@ -547,5 +547,291 @@ describe('safety: denied tables, query plans', () => {
     }
     db.close()
     expect(checked.size).toBeGreaterThan(12)
+  })
+})
+
+/* ───────────────────────────── usage (Task-19) ───────────────────────────── */
+
+const usageSamples = () => updates.flatMap((u) => (u.type === 'usage' ? u.samples : []))
+const usageEstimates = () => updates.flatMap((u) => (u.type === 'usage' ? u.estimates : []))
+const lastEstimate = (): UsageEstimate | undefined => usageEstimates().at(-1)
+
+/** Session + user message + assistant message (not completed unless `completed`). */
+function usageSession(id: string, opts: { updated?: number; completed?: number } = {}) {
+  const updated = opts.updated ?? NOW - 1000
+  fx.addSession({ id, title: id, agent: 'build', model: { id: 'claude-opus-5.5', providerID: 'github-copilot' }, created: NOW - 60_000, updated })
+  fx.addMessage({ id: `${id}_u`, sessionId: id, created: NOW - 50_000, data: { role: 'user', time: { created: NOW - 50_000 } } })
+  fx.addMessage({
+    id: `${id}_a`,
+    sessionId: id,
+    created: NOW - 40_000,
+    data: {
+      role: 'assistant', agent: 'build', mode: 'build', modelID: 'claude-opus-5.5', providerID: 'github-copilot',
+      time: opts.completed ? { created: NOW - 40_000, completed: opts.completed } : { created: NOW - 40_000 },
+    },
+  })
+  return { sid: id, mid: `${id}_a` }
+}
+
+describe('usage samples (getUsageSamples)', () => {
+  beforeEach(async () => {
+    seedRealisticFleet(fx, NOW)
+    await boot()
+  })
+
+  it('maps every field of a step-finish', () => {
+    const [s] = src.getUsageSamples!([FLEET.childDone])
+    expect(s).toEqual({
+      id: 'opencode:prt_d03_step_finish',
+      harness: 'opencode',
+      sessionId: FLEET.childDone,
+      rootId: null,
+      ledgerSeq: 0,
+      ts: NOW - 300_000,
+      startTs: NOW - 499_000,
+      model: { providerId: 'github-copilot', modelId: 'claude-sonnet-5.5' },
+      agent: 'sonnet-coder',
+      tokens: { input: 10, output: 200, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0.1,
+      aiu: null,
+      ttftMs: 198_000,
+      durationMs: 199_000,
+      finish: 'stop',
+      source: 'opencode.step-finish',
+    } satisfies UsageSample)
+  })
+
+  it('tolerates missing tokens/cost/start and falls back to session model/agent', () => {
+    fx.addSession({ id: 'ses_m', agent: 'plan', model: { id: 'gpt-x', providerID: 'github-copilot' }, created: NOW - 5000, updated: NOW - 1000 })
+    fx.addMessage({ id: 'msg_m', sessionId: 'ses_m', created: NOW - 4000, data: { role: 'assistant' } })
+    fx.addStepFinish({ id: 'prt_m1', messageId: 'msg_m', sessionId: 'ses_m', created: NOW - 3000, tokens: null, cost: null, reason: 'stop' })
+    const [s] = src.getUsageSamples!(['ses_m'])
+    expect(s).toMatchObject({
+      tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: null,
+      startTs: null,
+      durationMs: null,
+      ttftMs: null,
+      agent: 'plan',
+      model: { providerId: 'github-copilot', modelId: 'gpt-x' },
+    })
+  })
+
+  it('sorts by ts across sessions, honours sinceMs, ignores unknown sessions', () => {
+    const all = src.getUsageSamples!([FLEET.rootOld, 'ses_nope', FLEET.root, FLEET.childDone])
+    expect(all.map((x) => x.sessionId)).toEqual([FLEET.rootOld, FLEET.root, FLEET.childDone])
+    expect(all.map((x) => x.ts)).toEqual([...all.map((x) => x.ts)].sort((a, b) => a - b))
+    const recent = src.getUsageSamples!([FLEET.rootOld, FLEET.root, FLEET.childDone], { sinceMs: NOW - 400_000 })
+    expect(recent.map((x) => x.sessionId)).toEqual([FLEET.root, FLEET.childDone])
+    expect(src.getUsageSamples!(['ses_nope'])).toEqual([])
+  })
+
+  it('pairs the k-th step-start with the k-th step-finish of a message', () => {
+    fx.addSession({ id: 'ses_k', created: NOW - 9000, updated: NOW - 100 })
+    fx.addMessage({ id: 'msg_k', sessionId: 'ses_k', created: NOW - 9000, data: { role: 'assistant' } })
+    fx.addStepStart({ id: 'prt_k1', messageId: 'msg_k', sessionId: 'ses_k', created: NOW - 8000 })
+    fx.addStepFinish({ id: 'prt_k2', messageId: 'msg_k', sessionId: 'ses_k', created: NOW - 7000 })
+    fx.addStepStart({ id: 'prt_k3', messageId: 'msg_k', sessionId: 'ses_k', created: NOW - 6000 })
+    fx.addStepFinish({ id: 'prt_k4', messageId: 'msg_k', sessionId: 'ses_k', created: NOW - 4000 })
+    expect(src.getUsageSamples!(['ses_k']).map((x) => x.durationMs)).toEqual([1000, 2000])
+  })
+
+  it('Σ samples equals the session row totals (fixture sessions)', () => {
+    fx.addSession({
+      id: 'ses_tot',
+      created: NOW - 9000,
+      updated: NOW - 100,
+      cost: 0.75,
+      tokens: { input: 30, output: 70, reasoning: 5, cacheRead: 9000, cacheWrite: 400 },
+    })
+    fx.addMessage({ id: 'msg_t1', sessionId: 'ses_tot', created: NOW - 9000, data: { role: 'assistant' } })
+    fx.addMessage({ id: 'msg_t2', sessionId: 'ses_tot', created: NOW - 5000, data: { role: 'assistant' } })
+    fx.addStepFinish({ id: 'prt_t1', messageId: 'msg_t1', sessionId: 'ses_tot', created: NOW - 8000, tokens: { input: 10, output: 20, reasoning: 5, cacheRead: 4000, cacheWrite: 400 }, cost: 0.25 })
+    fx.addStepFinish({ id: 'prt_t2', messageId: 'msg_t2', sessionId: 'ses_tot', created: NOW - 4000, tokens: { input: 20, output: 50, cacheRead: 5000 }, cost: 0.5 })
+    for (const sid of ['ses_tot', FLEET.childDone, FLEET.rootOld]) {
+      const row = fx.db.prepare('SELECT * FROM session WHERE id = ?').get(sid) as Record<string, number>
+      const ss = src.getUsageSamples!([sid])
+      expect(ss.length).toBeGreaterThan(0)
+      const sum = (f: (x: UsageSample) => number) => ss.reduce((a, x) => a + f(x), 0)
+      expect(sum((x) => x.tokens.input)).toBe(row['tokens_input'])
+      expect(sum((x) => x.tokens.output)).toBe(row['tokens_output'])
+      expect(sum((x) => x.tokens.reasoning)).toBe(row['tokens_reasoning'])
+      expect(sum((x) => x.tokens.cacheRead)).toBe(row['tokens_cache_read'])
+      expect(sum((x) => x.tokens.cacheWrite)).toBe(row['tokens_cache_write'])
+      expect(sum((x) => x.cost ?? 0)).toBeCloseTo(row['cost']!, 9)
+    }
+  })
+
+  it('works without the event table and only uses indexed access', async () => {
+    await src.stop()
+    fx.db.exec('DROP TABLE event')
+    sql = []
+    await boot()
+    expect(src.getUsageSamples!([FLEET.childDone])).toHaveLength(1)
+    src.getUsageSamples!([FLEET.root], { sinceMs: 1 })
+    const db = openReadOnly(fx.path, { deniedTables: OPENCODE_DENIED_TABLES })
+    const mine = sql.filter((x) => /step-finish|step-start|\$\.time\.start|\$\.modelID/.test(x.sql))
+    expect(mine.length).toBeGreaterThanOrEqual(4)
+    for (const { sql: s, params } of mine) {
+      const plan = db.explain(s, ...(params as never[]))
+      expect(plan.some((l) => /^SEARCH (part|message) USING INDEX/.test(l)), `${s}\n${plan.join('\n')}`).toBe(true)
+      for (const l of plan) expect(l).not.toMatch(/^SCAN (part|message)\b/)
+    }
+    db.close()
+  })
+})
+
+describe('live usage from the event tail', () => {
+  beforeEach(async () => {
+    await boot()
+  })
+
+  const addStartEv = (sid: string, mid: string, id: string, at: number) => {
+    fx.addStepStart({ id, messageId: mid, sessionId: sid, created: at })
+    fx.appendPartEvent(id, at)
+  }
+  const addTextPart = (sid: string, mid: string, id: string, at: number, text = '') => {
+    fx.addPart({ id, messageId: mid, sessionId: sid, created: at, data: { type: 'text', text, time: { start: at } } })
+  }
+  const step = (at: number) => {
+    clock = at
+    fx.db.exec('SELECT 1')
+    src.tick()
+  }
+
+  it('start → growth → throttle → finish yields estimates, one sample, and an end estimate', async () => {
+    await src.stop()
+    updates = []
+    const { sid, mid } = usageSession('ses_live')
+    await boot()
+    clock = NOW + 100
+    addStartEv(sid, mid, 'prt_l1_start', NOW + 100)
+    src.tick()
+    expect(lastEstimate()).toMatchObject({ sessionId: sid, harness: 'opencode', startedAt: NOW + 100, estOutputTokens: 0, inFlight: true })
+
+    addTextPart(sid, mid, 'prt_l2_text', NOW + 300)
+    fx.appendTextGrowth('prt_l2_text', 'x'.repeat(40), NOW + 1000)
+    clock = NOW + 1000
+    src.tick()
+    expect(lastEstimate()).toMatchObject({ estOutputTokens: 10, inFlight: true })
+
+    const n = usageEstimates().length
+    fx.appendTextGrowth('prt_l2_text', 'x'.repeat(80), NOW + 1100)
+    clock = NOW + 1100 // < 500 ms since the last emit → throttled
+    src.tick()
+    expect(usageEstimates()).toHaveLength(n)
+    fx.appendTextGrowth('prt_l2_text', 'x'.repeat(120), NOW + 1600)
+    clock = NOW + 1600
+    src.tick()
+    expect(lastEstimate()).toMatchObject({ estOutputTokens: 30, inFlight: true })
+
+    fx.addStepFinish({ id: 'prt_l3_finish', messageId: mid, sessionId: sid, created: NOW + 2000, tokens: { input: 5, output: 31, cacheRead: 900 }, cost: 0.02, reason: 'stop' })
+    fx.appendPartEvent('prt_l3_finish', NOW + 2000)
+    clock = NOW + 2000
+    src.tick()
+    expect(usageSamples()).toEqual([
+      expect.objectContaining({
+        id: 'opencode:prt_l3_finish',
+        sessionId: sid,
+        ts: NOW + 2000,
+        startTs: NOW + 100,
+        durationMs: 1900,
+        ttftMs: 200,
+        cost: 0.02,
+        finish: 'stop',
+        model: { providerId: 'github-copilot', modelId: 'claude-opus-5.5' },
+        agent: 'build',
+        tokens: { input: 5, output: 31, reasoning: 0, cacheRead: 900, cacheWrite: 0 },
+      }),
+    ])
+    expect(lastEstimate()).toMatchObject({ sessionId: sid, estOutputTokens: 30, inFlight: false })
+    // sample == getUsageSamples row
+    expect(src.getUsageSamples!([sid])[0]).toEqual(usageSamples()[0])
+    // usage comes after sessions/activity in the same tick
+    const types = updates.map((u) => u.type)
+    expect(types.lastIndexOf('usage')).toBeGreaterThan(types.lastIndexOf('sessions'))
+
+    // re-delivery of the same finish part never emits a second sample
+    fx.appendPartEvent('prt_l3_finish', NOW + 2100)
+    step(NOW + 2100)
+    expect(usageSamples()).toHaveLength(1)
+  })
+
+  it('handles start + growth + finish coalesced into one batch in any order', () => {
+    const { sid, mid } = usageSession('ses_batch')
+    addTextPart(sid, mid, 'prt_b2_text', NOW + 300, 'y'.repeat(80))
+    fx.addStepStart({ id: 'prt_b1_start', messageId: mid, sessionId: sid, created: NOW + 100 })
+    fx.addStepFinish({ id: 'prt_b3_finish', messageId: mid, sessionId: sid, created: NOW + 900, tokens: { output: 25 }, cost: 0.01, reason: 'stop' })
+    // reversed arrival order
+    fx.appendPartEvent('prt_b3_finish', NOW + 900)
+    fx.appendPartEvent('prt_b2_text', NOW + 800)
+    fx.appendPartEvent('prt_b1_start', NOW + 100)
+    clock = NOW + 1000
+    src.tick()
+    expect(usageSamples()).toHaveLength(1)
+    expect(usageSamples()[0]).toMatchObject({ startTs: NOW + 100, durationMs: 800, ttftMs: 200 })
+    expect(usageEstimates().filter((e) => e.sessionId === sid)).toEqual([expect.objectContaining({ inFlight: false, estOutputTokens: 20 })])
+  })
+
+  it('emits a sample for a finish without a start in the same batch', () => {
+    const { sid, mid } = usageSession('ses_nostart')
+    fx.addStepFinish({ id: 'prt_n1_finish', messageId: mid, sessionId: sid, created: NOW + 500, tokens: { output: 7 }, reason: 'tool-calls' })
+    fx.appendPartEvent('prt_n1_finish', NOW + 500)
+    clock = NOW + 600
+    src.tick()
+    expect(usageSamples()).toEqual([expect.objectContaining({ id: 'opencode:prt_n1_finish', startTs: null, durationMs: null, ttftMs: null })])
+    expect(usageEstimates()).toEqual([])
+  })
+
+  it('ends the estimate when the message completes without a step-finish', () => {
+    const { sid, mid } = usageSession('ses_abort')
+    addStartEv(sid, mid, 'prt_a1_start', NOW + 100)
+    addTextPart(sid, mid, 'prt_a2_text', NOW + 200)
+    fx.appendTextGrowth('prt_a2_text', 'z'.repeat(16), NOW + 300)
+    clock = NOW + 300
+    src.tick()
+    expect(lastEstimate()).toMatchObject({ estOutputTokens: 4, inFlight: true })
+    fx.db
+      .prepare('UPDATE message SET data = ? WHERE id = ?')
+      .run(JSON.stringify({ role: 'assistant', agent: 'build', time: { created: NOW - 40_000, completed: NOW + 400 }, error: { name: 'Aborted' } }), mid)
+    fx.appendMessageEvent(mid)
+    clock = NOW + 400
+    src.tick()
+    expect(lastEstimate()).toMatchObject({ sessionId: sid, inFlight: false, estOutputTokens: 4 })
+    expect(usageSamples()).toEqual([])
+  })
+
+  it('counts tool input once per part and ignores user text', () => {
+    const { sid, mid } = usageSession('ses_tool')
+    addStartEv(sid, mid, 'prt_t1_start', NOW + 100)
+    const input = { command: 'npm test', description: 'run' }
+    fx.addPart({ id: 'prt_t2_tool', messageId: mid, sessionId: sid, created: NOW + 200, data: { type: 'tool', callID: 'c1', tool: 'bash', state: { status: 'running', input } } })
+    fx.appendPartEvent('prt_t2_tool', NOW + 200)
+    fx.addPart({ id: 'prt_t3_user', messageId: `${sid}_u`, sessionId: sid, created: NOW + 150, data: { type: 'text', text: 'u'.repeat(400) } })
+    fx.appendPartEvent('prt_t3_user', NOW + 150)
+    clock = NOW + 300
+    src.tick()
+    const want = Math.ceil(JSON.stringify(input).length / 4)
+    expect(lastEstimate()?.estOutputTokens).toBe(want)
+    fx.appendPartEvent('prt_t2_tool', NOW + 900)
+    step(NOW + 1000)
+    expect(lastEstimate()?.estOutputTokens).toBe(want)
+  })
+
+  it('detects a call already in flight at startup', async () => {
+    await src.stop()
+    updates = []
+    const { sid, mid } = usageSession('ses_boot', { updated: NOW - 5000 })
+    fx.addStepStart({ id: 'prt_s1_start', messageId: mid, sessionId: sid, created: NOW - 8000 })
+    fx.addPart({ id: 'prt_s2_text', messageId: mid, sessionId: sid, created: NOW - 7000, data: { type: 'text', text: 'q'.repeat(100), time: { start: NOW - 7000 } } })
+    await boot()
+    const e = usageEstimates().find((x) => x.sessionId === sid)
+    expect(e).toMatchObject({ startedAt: NOW - 8000, estOutputTokens: 25, inFlight: true, harness: 'opencode' })
+    // a finished step is not in flight
+    await src.stop()
+    updates = []
+    fx.addStepFinish({ id: 'prt_s3_finish', messageId: mid, sessionId: sid, created: NOW - 4000 })
+    await boot()
+    expect(usageEstimates().find((x) => x.sessionId === sid)).toBeUndefined()
   })
 })

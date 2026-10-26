@@ -51,4 +51,40 @@ if (biggest) {
 t = process.hrtime.bigint()
 const recent = src.recentActivity({ sinceMs: Date.now() - 3600_000, limit: 500 })
 console.log(`recentActivity: ${recent.length} events in ${ms(t).toFixed(1)} ms`)
+
+// ── usage samples (Task-19): Σ samples must equal the session row totals exactly
+{
+  const { openReadOnly, OPENCODE_DENIED_TABLES } = await import('../../lib/sqlite.js')
+  const db = openReadOnly(path, { deniedTables: OPENCODE_DENIED_TABLES })
+  const top = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 3)
+  for (const s of top) {
+    t = process.hrtime.bigint()
+    const samples = src.getUsageSamples!([s.id])
+    const took = ms(t)
+    const row = db.get<Record<string, number>>(
+      'SELECT cost, tokens_input AS i, tokens_output AS o, tokens_reasoning AS r, tokens_cache_read AS cr, tokens_cache_write AS cw FROM session WHERE id = ?',
+      s.id,
+    )!
+    const sum = { i: 0, o: 0, r: 0, cr: 0, cw: 0, cost: 0 }
+    const ttft: number[] = []
+    for (const x of samples) {
+      sum.i += x.tokens.input
+      sum.o += x.tokens.output
+      sum.r += x.tokens.reasoning
+      sum.cr += x.tokens.cacheRead
+      sum.cw += x.tokens.cacheWrite
+      sum.cost += x.cost ?? 0
+      if (x.ttftMs != null) ttft.push(x.ttftMs)
+    }
+    ttft.sort((a, b) => a - b)
+    const match =
+      sum.i === row.i && sum.o === row.o && sum.r === row.r && sum.cr === row.cr && sum.cw === row.cw && Math.abs(sum.cost - row.cost) < 1e-9
+    console.log(
+      `usage ${s.id}: ${samples.length} samples Σ in=${sum.i} out=${sum.o} rsn=${sum.r} cr=${sum.cr} cw=${sum.cw} cost=${sum.cost.toFixed(6)}` +
+        ` | session row in=${row.i} out=${row.o} rsn=${row.r} cr=${row.cr} cw=${row.cw} cost=${Number(row.cost).toFixed(6)}` +
+        ` | ${match ? 'EXACT MATCH' : 'MISMATCH'} | ttft p50=${ttft.length ? ttft[Math.floor(ttft.length / 2)] : 'n/a'} ms (${ttft.length} measured) | getUsageSamples ${took.toFixed(1)} ms`,
+    )
+  }
+  db.close()
+}
 await src.stop()

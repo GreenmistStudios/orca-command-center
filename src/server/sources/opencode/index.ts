@@ -16,8 +16,11 @@ import type {
   ToolStat,
   TranscriptMessage,
   TranscriptPage,
+  UsageEstimate,
+  UsageSample,
 } from '../../../shared/contract.js'
 import { LIMITS } from '../../../shared/contract.js'
+import { estimateTokensFromChars } from '../../../shared/usage-math.js'
 import { OPENCODE_DENIED_TABLES, openReadOnly, type ReadOnlyDb } from '../../lib/sqlite.js'
 import { clip, oneLine } from '../../lib/text.js'
 import { createToolClassifier } from '../../lib/tool-classify.js'
@@ -90,6 +93,25 @@ const EVENT_BATCH = 2000
 const MAX_BATCHES = 10
 const MSG_CACHE = 5000
 const DERIVED_CAP = 4000
+const SEEN_CAP = 5000
+const EST_THROTTLE_MS = 500
+
+/** Streaming estimate: generated tokens ≈ streamed chars / 4 (shared definition). */
+const estTokens = (chars: number): number => estimateTokensFromChars(chars)
+const numOr = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
+/** A metered LLM call that is still streaming (one per session). */
+interface InFlight {
+  messageId: string
+  startedAt: number
+  /** true when startedAt came from a step-start part (not a lazily-seen chunk). */
+  explicit: boolean
+  est: number
+  firstOutputAt: number | null
+  updatedAt: number
+  lastEmitAt: number
+  emitted: boolean
+}
 
 interface SessionRow {
   id: string
@@ -595,6 +617,9 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
     spawnChecked.clear()
     msgCache.clear()
     parentMap.clear()
+    calls.clear()
+    seen.clear()
+    sampled.clear()
     lastDv = q().dataVersion()
     if (hasTable.has('event')) cursor = maxRowid()
     for (const r of q().all<{ id: string; parent_id: string | null }>('SELECT id, parent_id FROM session')) {
@@ -624,6 +649,7 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
       derivedOf(r.id)
       if (r.parent_id) findSpawn(r)
     }
+    detectInFlight()
   }
 
   /* ───────────────────────────── event feed ───────────────────────────── */
@@ -667,6 +693,8 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
     touched: Set<string>
     events: ActivityEvent[]
     todoSessions: Set<string>
+    samples: UsageSample[]
+    estimates: UsageEstimate[]
   }
 
   function processBatch(batch: Batch, source: 'opencode.event' | 'opencode.part'): Processed {
@@ -707,7 +735,345 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
       if (!n.muted) events.push(n.event)
     }
     events.sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1))
-    return { touched, events, todoSessions }
+    const usage = processUsage(batch)
+    return { touched, events, todoSessions, samples: usage.samples, estimates: usage.estimates }
+  }
+
+  /* ───────────────────────── usage (samples + estimates) ───────────────────────── */
+
+  const calls = new Map<string, InFlight>()
+  /** LRU of seen keys: `<partId>` → last text length, `tool:<partId>` / `start:<partId>` markers. */
+  const seen = new Map<string, number>()
+  /** LRU of part ids already emitted as samples. */
+  const sampled = new Set<string>()
+
+  function remember(key: string, v: number): void {
+    seen.delete(key)
+    seen.set(key, v)
+    if (seen.size > SEEN_CAP) {
+      const first = seen.keys().next().value
+      if (first !== undefined) seen.delete(first)
+    }
+  }
+
+  function markSampled(id: string): void {
+    sampled.delete(id)
+    sampled.add(id)
+    if (sampled.size > SEEN_CAP) {
+      const first = sampled.values().next().value
+      if (first !== undefined) sampled.delete(first)
+    }
+  }
+
+  function estimateOf(sid: string, c: InFlight, inFlight: boolean): UsageEstimate {
+    return {
+      sessionId: sid,
+      rootId: rootOf(sid),
+      harness: 'opencode',
+      startedAt: c.startedAt,
+      updatedAt: c.updatedAt,
+      estOutputTokens: c.est,
+      inFlight,
+    }
+  }
+
+  function callFor(sid: string, mid: string, at: number, explicit: boolean): InFlight {
+    const cur = calls.get(sid)
+    if (cur && cur.messageId === mid) return cur
+    const c: InFlight = { messageId: mid, startedAt: at, explicit, est: 0, firstOutputAt: null, updatedAt: at, lastEmitAt: 0, emitted: false }
+    calls.set(sid, c)
+    return c
+  }
+
+  interface SampleParts {
+    partId: string
+    sessionId: string
+    ts: number
+    startTs: number | null
+    firstOutputTs: number | null
+    tokens: ReturnType<typeof toTokenUsage>
+    cost: number | null
+    reason: string | null
+    model: ModelRef | null
+    agent: string | null
+  }
+
+  function buildSample(p: SampleParts): UsageSample {
+    const durationMs = p.startTs != null && p.ts >= p.startTs ? p.ts - p.startTs : null
+    let ttftMs: number | null = null
+    if (p.startTs != null && p.firstOutputTs != null && durationMs != null) {
+      const t = p.firstOutputTs - p.startTs
+      if (t >= 0 && t <= durationMs) ttftMs = t
+    }
+    return {
+      id: `opencode:${p.partId}`,
+      harness: 'opencode',
+      sessionId: p.sessionId,
+      rootId: null,
+      ledgerSeq: 0,
+      ts: p.ts,
+      startTs: p.startTs,
+      model: p.model,
+      agent: p.agent,
+      tokens: p.tokens,
+      cost: p.cost,
+      aiu: null,
+      ttftMs,
+      durationMs,
+      finish: p.reason,
+      source: 'opencode.step-finish',
+    }
+  }
+
+  function processUsage(batch: Batch): { samples: UsageSample[]; estimates: UsageEstimate[] } {
+    const samples: UsageSample[] = []
+    const out = new Map<string, UsageEstimate>()
+    const touched = new Set<string>()
+    const items: Array<{ pid: string; part: any; time: number | null; phase: number }> = []
+    for (const [pid, { part, time }] of batch.parts) {
+      const type = part.type
+      const phase = type === 'step-start' ? 0 : type === 'step-finish' ? 2 : type === 'text' || type === 'reasoning' || type === 'tool' ? 1 : -1
+      if (phase < 0 || !part.sessionID || !part.messageID) continue
+      items.push({ pid, part, time, phase })
+    }
+    // handle every arrival order of a coalesced batch: start → growth → finish
+    items.sort((a, b) => a.phase - b.phase)
+    for (const { pid, part, time, phase } of items) {
+      const sid = String(part.sessionID)
+      const mid = String(part.messageID)
+      const at = time ?? now()
+      if (phase === 0) {
+        if (seen.has(`start:${pid}`)) continue
+        remember(`start:${pid}`, 1)
+        calls.delete(sid)
+        callFor(sid, mid, at, true)
+        touched.add(sid)
+      } else if (phase === 1) {
+        const info = msgOf(mid, batch.msgs)
+        let chars = 0
+        let toolTokens = 0
+        let produced = false
+        if (part.type === 'tool') {
+          const input = part.state?.input
+          if (input && typeof input === 'object' && Object.keys(input).length > 0 && !seen.has(`tool:${pid}`)) {
+            remember(`tool:${pid}`, 1)
+            toolTokens = estTokens(JSON.stringify(input).length)
+            produced = true
+          }
+        } else {
+          if (part.type === 'text' && info?.role !== 'assistant') continue
+          const len = typeof part.text === 'string' ? part.text.length : 0
+          chars = Math.max(0, len - (seen.get(pid) ?? 0))
+          remember(pid, Math.max(len, seen.get(pid) ?? 0))
+          produced = len > 0
+        }
+        const cur = calls.get(sid)
+        if (!cur || cur.messageId !== mid) {
+          if (info && (info.completed != null || info.error)) continue
+          if (!produced && chars === 0 && toolTokens === 0) continue
+        }
+        const c = callFor(sid, mid, typeof part.time?.start === 'number' ? part.time.start : at, false)
+        c.est += estTokens(chars) + toolTokens
+        if (produced && c.firstOutputAt == null && part.type !== 'tool') c.firstOutputAt = typeof part.time?.start === 'number' ? part.time.start : at
+        c.updatedAt = Math.max(c.updatedAt, at)
+        touched.add(sid)
+      } else {
+        const c = calls.get(sid)
+        const live = c && c.messageId === mid ? c : null
+        if (!sampled.has(pid)) {
+          samples.push(sampleFromFinish(pid, sid, mid, part, at, live, batch))
+          markSampled(pid)
+        }
+        if (live) {
+          live.updatedAt = Math.max(live.updatedAt, at)
+          out.set(sid, estimateOf(sid, live, false))
+          calls.delete(sid)
+          touched.delete(sid)
+        }
+      }
+    }
+    for (const [mid, info] of batch.msgs) {
+      const sid = String(info.sessionID ?? '')
+      const c = calls.get(sid)
+      if (!c || c.messageId !== mid) continue
+      if (typeof info.time?.completed === 'number' || info.error) {
+        c.updatedAt = Math.max(c.updatedAt, typeof info.time?.completed === 'number' ? info.time.completed : now())
+        out.set(sid, estimateOf(sid, c, false))
+        calls.delete(sid)
+        touched.delete(sid)
+      }
+    }
+    const t = now()
+    for (const sid of touched) {
+      const c = calls.get(sid)
+      if (!c) continue
+      if (!c.emitted || t - c.lastEmitAt >= EST_THROTTLE_MS) {
+        c.emitted = true
+        c.lastEmitAt = t
+        out.set(sid, estimateOf(sid, c, true))
+      }
+    }
+    samples.sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1))
+    return { samples, estimates: [...out.values()] }
+  }
+
+  function sampleFromFinish(pid: string, sid: string, mid: string, part: any, at: number, live: InFlight | null, batch: Batch): UsageSample {
+    // authoritative times come from the DB rows (same source as getUsageSamples); event time is the fallback
+    const ts = numOr(q().get<{ tc: number }>('SELECT time_created AS tc FROM part WHERE id = ?', pid)?.tc) ?? at
+    let startTs: number | null =
+      numOr(
+        q().get<{ tc: number }>(
+          `SELECT time_created AS tc FROM part WHERE message_id = ? AND json_extract(data, '$.type') = 'step-start'
+             AND time_created <= ? ORDER BY id DESC LIMIT 1`,
+          mid,
+          ts,
+        )?.tc,
+      ) ?? null
+    if (startTs == null && live?.explicit) startTs = live.startedAt
+    let firstOutputTs = live?.firstOutputAt ?? null
+    if (firstOutputTs == null && startTs != null) {
+      firstOutputTs = numOr(
+        q().get<{ t: number | null }>(
+          `SELECT min(json_extract(data, '$.time.start')) AS t FROM part WHERE message_id = ?
+             AND json_extract(data, '$.type') IN ('text', 'reasoning')`,
+          mid,
+        )?.t,
+      )
+    }
+    const info = msgOf(mid, batch.msgs)
+    const row = rowOf(sid)
+    return buildSample({
+      partId: pid,
+      sessionId: sid,
+      ts,
+      startTs,
+      firstOutputTs,
+      tokens: toTokenUsage(part.tokens),
+      cost: numOr(part.cost),
+      reason: typeof part.reason === 'string' ? part.reason : null,
+      model: info?.model ?? parseModel(row?.model ?? null),
+      agent: info?.agent ?? row?.agent ?? null,
+    })
+  }
+
+  /** Best-effort: seed in-flight estimates for sessions whose latest assistant turn is mid-call. */
+  function detectInFlight(): void {
+    const t = now()
+    const out: UsageEstimate[] = []
+    for (const [sid, row] of rows) {
+      if (row.time_updated < t - config.thresholds.workingMs || row.time_updated < t - config.windowMs) continue
+      const d = derived.get(sid)
+      if (!d?.asst || d.asst.completed || d.asst.error) continue
+      const mid = d.asst.id
+      const ps = q().all<{ id: string; t: string | null; tc: number; len: number | null; il: number | null }>(
+        `SELECT id, json_extract(data, '$.type') AS t, time_created AS tc,
+                length(json_extract(data, '$.text')) AS len, length(json_extract(data, '$.state.input')) AS il
+           FROM part WHERE message_id = ? ORDER BY id`,
+        mid,
+      )
+      let startedAt: number | null = null
+      let est = 0
+      let firstOutputAt: number | null = null
+      let updatedAt = 0
+      for (const p of ps) {
+        updatedAt = Math.max(updatedAt, p.tc)
+        if (p.t === 'step-start') {
+          startedAt = p.tc
+          est = 0
+          firstOutputAt = null
+        } else if (p.t === 'step-finish') {
+          startedAt = null
+        } else if (startedAt != null && (p.t === 'text' || p.t === 'reasoning')) {
+          const len = Number(p.len ?? 0)
+          remember(p.id, len)
+          est += estTokens(len)
+          if (len > 0 && firstOutputAt == null) firstOutputAt = p.tc
+        } else if (startedAt != null && p.t === 'tool' && Number(p.il ?? 0) > 2) {
+          remember(`tool:${p.id}`, 1)
+          est += estTokens(Number(p.il))
+        }
+      }
+      if (startedAt == null) continue
+      const c: InFlight = { messageId: mid, startedAt, explicit: true, est, firstOutputAt, updatedAt: Math.max(updatedAt, startedAt), lastEmitAt: t, emitted: true }
+      calls.set(sid, c)
+      out.push(estimateOf(sid, c, true))
+    }
+    if (out.length) emit({ type: 'usage', samples: [], estimates: out })
+  }
+
+  function getUsageSamples(sessionIds: string[], options: { sinceMs?: number } = {}): UsageSample[] {
+    const out: UsageSample[] = []
+    for (const sid of sessionIds) {
+      const row = rowOf(sid)
+      if (!row) continue
+      const since = options.sinceMs
+      const fin = q().all<{ id: string; message_id: string; tc: number; ti: unknown; to: unknown; tr: unknown; cr: unknown; cw: unknown; cost: unknown; reason: unknown }>(
+        `SELECT id, message_id, time_created AS tc, json_extract(data, '$.tokens.input') AS ti,
+                json_extract(data, '$.tokens.output') AS "to", json_extract(data, '$.tokens.reasoning') AS tr,
+                json_extract(data, '$.tokens.cache.read') AS cr, json_extract(data, '$.tokens.cache.write') AS cw,
+                json_extract(data, '$.cost') AS cost, json_extract(data, '$.reason') AS reason
+           FROM part WHERE session_id = ? AND json_extract(data, '$.type') = 'step-finish'${since != null ? ' AND time_created >= ?' : ''}
+           ORDER BY time_created, id`,
+        ...(since != null ? [sid, since] : [sid]),
+      )
+      if (!fin.length) continue
+      const starts = new Map<string, number[]>()
+      for (const r of q().all<{ message_id: string; tc: number }>(
+        `SELECT message_id, time_created AS tc FROM part WHERE session_id = ? AND json_extract(data, '$.type') = 'step-start'
+           ORDER BY time_created, id`,
+        sid,
+      )) {
+        const l = starts.get(r.message_id)
+        if (l) l.push(Number(r.tc))
+        else starts.set(r.message_id, [Number(r.tc)])
+      }
+      const firstOut = new Map<string, number>()
+      for (const r of q().all<{ message_id: string; t: number | null }>(
+        `SELECT message_id, min(json_extract(data, '$.time.start')) AS t FROM part WHERE session_id = ?
+           AND json_extract(data, '$.type') IN ('text', 'reasoning') GROUP BY message_id`,
+        sid,
+      )) {
+        const t = numOr(r.t)
+        if (t != null) firstOut.set(r.message_id, t)
+      }
+      const msgs = new Map<string, { model: ModelRef | null; agent: string | null }>()
+      for (const r of q().all<{ id: string; m: string | null; p: string | null; a: string | null; mode: string | null }>(
+        `SELECT id, json_extract(data, '$.modelID') AS m, json_extract(data, '$.providerID') AS p,
+                json_extract(data, '$.agent') AS a, json_extract(data, '$.mode') AS mode
+           FROM message WHERE session_id = ?`,
+        sid,
+      )) {
+        msgs.set(r.id, { model: typeof r.m === 'string' ? { providerId: typeof r.p === 'string' ? r.p : null, modelId: r.m } : null, agent: r.a ?? r.mode ?? null })
+      }
+      const sessionModel = parseModel(row.model)
+      const used = new Map<string, number>()
+      for (const f of fin) {
+        const k = used.get(f.message_id) ?? 0
+        used.set(f.message_id, k + 1)
+        const m = msgs.get(f.message_id)
+        out.push(
+          buildSample({
+            partId: f.id,
+            sessionId: sid,
+            ts: Number(f.tc),
+            startTs: starts.get(f.message_id)?.[k] ?? null,
+            firstOutputTs: firstOut.get(f.message_id) ?? null,
+            tokens: {
+              input: numOr(f.ti) ?? 0,
+              output: numOr(f.to) ?? 0,
+              reasoning: numOr(f.tr) ?? 0,
+              cacheRead: numOr(f.cr) ?? 0,
+              cacheWrite: numOr(f.cw) ?? 0,
+            },
+            cost: numOr(f.cost),
+            reason: typeof f.reason === 'string' ? f.reason : null,
+            model: m?.model ?? sessionModel,
+            agent: m?.agent ?? row.agent ?? null,
+          }),
+        )
+      }
+    }
+    return out.sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1))
   }
 
   function publish(p: Processed): void {
@@ -719,6 +1085,7 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
     if (sessions.length) emit({ type: 'sessions', sessions })
     if (p.events.length) emit({ type: 'activity', events: p.events })
     for (const sid of p.todoSessions) emit({ type: 'todos', sessionId: sid, todos: getTodos(sid) })
+    if (p.samples.length || p.estimates.length) emit({ type: 'usage', samples: p.samples, estimates: p.estimates })
   }
 
   function tickEvents(): void {
@@ -1357,6 +1724,7 @@ export function createOpenCodeSource(deps: SourceDeps, options: OpenCodeSourceOp
     getPart: guard(null, getPart),
     getDiff: guard(null, getDiff),
     getFileChanges: guard([], getFileChanges),
+    getUsageSamples: guard([], getUsageSamples),
   }
   return source
 }

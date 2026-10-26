@@ -446,3 +446,50 @@ describe('liveness without per-tick relisting', () => {
     await until(() => src.getSession('l')!.processAlive === false)
   })
 })
+
+describe('usage extraction', () => {
+  it('maps calls, sums tokens, drops sensitive data, honours sinceMs', async () => {
+    const fleet = seedCopilotFleet(tmp)
+    const { src } = make(tmp)
+    await src.start()
+    const s = src.getUsageSamples!([fleet.finishedId, fleet.liveId])
+    expect(s.map((x) => x.id)).toEqual(expect.arrayContaining([`copilot:${fleet.finishedId}:call:mc-1`]))
+    const a = s.find((x) => x.id.endsWith('mc-1'))!
+    expect(a.tokens).toEqual({ input: 600, cacheRead: 400, cacheWrite: 0, reasoning: 20, output: 100 })
+    expect(a).toMatchObject({ aiu: 2, ttftMs: 350, durationMs: 3000, cost: null, agent: 'copilot', source: 'copilot.model_call_success', model: { providerId: 'github-copilot', modelId: 'claude-sonnet-5.5' } })
+    expect([...s].sort((x, y) => x.ts - y.ts)).toEqual(s)
+    expect(src.getUsageSamples!([fleet.finishedId], { sinceMs: a.ts + 1 })).toHaveLength(1)
+    const fin = src.getSession(fleet.finishedId)!
+    expect(fin.tokens).toEqual({ input: 600 + 500, cacheRead: 1400, cacheWrite: 0, reasoning: 20, output: 100 + 80 })
+    expect(fin.cost).toBe(0)
+    const all = JSON.stringify([s, src.listSessions(0), src.recentActivity({ sinceMs: 0, limit: 1000 })])
+    expect(all).not.toContain('SECRET_PROMPT_SENTINEL')
+    expect(all).not.toContain('123456')
+  })
+
+  it('emits live in-flight estimates and samples', async () => {
+    const fleet = seedCopilotFleet(tmp)
+    const { src, updates } = make(tmp)
+    await src.start()
+    const fx = fleet.fixture
+    fx.append(fleet.liveId, [fx.ev.modelCallSuccess({ prompt: 100, completion: 10, nanoAiu: 1e9, callId: 'live-2', turn: 1 })])
+    await until(() => updates.some((u) => u.type === 'usage' && u.samples.length > 0))
+    const us = updates.filter((u): u is Extract<HarnessUpdate, { type: 'usage' }> => u.type === 'usage')
+    expect(us.flatMap((u) => u.samples).map((x) => x.id)).toEqual([`copilot:${fleet.liveId}:call:live-2`])
+    expect(us.flatMap((u) => u.estimates).at(-1)).toMatchObject({ inFlight: false, sessionId: fleet.liveId })
+    fx.append(fleet.liveId, [fx.ev.modelCallStarted({ turn: 2 })])
+    await until(() => updates.some((u) => u.type === 'usage' && u.estimates.some((x) => x.inFlight)))
+    fx.append(fleet.liveId, [fx.ev.abort('stop')])
+    await until(() => updates.filter((u) => u.type === 'usage').some((u) => u.estimates.some((x) => !x.inFlight && x.startedAt > 0) && u !== us[0]))
+  })
+
+  it('shows shutdown facts', async () => {
+    const fx = createCopilotFixture(tmp)
+    fx.createSession('s1', { events: [fx.ev.sessionStart(), fx.ev.shutdown({ systemTokens: 1200, toolDefinitionsTokens: 3400, conversationTokens: 56000, totalApiDurationMs: 4200 })] })
+    const { src } = make(tmp)
+    await src.start()
+    const facts = src.getSession('s1')!.facts
+    expect(facts).toContainEqual({ label: 'Context (system · tools · conversation)', value: '1,200 · 3,400 · 56,000' })
+    expect(facts).toContainEqual({ label: 'API time', value: '4200 ms' })
+  })
+})

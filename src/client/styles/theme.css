@@ -345,3 +345,43 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ─────────── token flow (design-system §15.1) ─────────── */
+:root {
+  --flow-input: #0284c7;
+  --flow-cache-read: #0891b2;
+  --flow-cache-write: #4f46e5;
+  --flow-output: #059669;
+  --flow-reasoning: #7c3aed;
+  --flow-cost: #d97706;
+  --flow-estimate: color-mix(in oklch, var(--flow-output) 55%, transparent);
+}
+.dark {
+  --flow-input: #38bdf8;
+  --flow-cache-read: #67e8f9;
+  --flow-cache-write: #a5b4fc;
+  --flow-output: #34d399;
+  --flow-reasoning: #c4b5fd;
+  --flow-cost: #fbbf24;
+  --flow-estimate: color-mix(in oklch, var(--flow-output) 55%, transparent);
+}
+@theme inline {
+  --color-flow-input: var(--flow-input);
+  --color-flow-cache-read: var(--flow-cache-read);
+  --color-flow-cache-write: var(--flow-cache-write);
+  --color-flow-output: var(--flow-output);
+  --color-flow-reasoning: var(--flow-reasoning);
+  --color-flow-cost: var(--flow-cost);
+  --color-flow-estimate: var(--flow-estimate);
+}
+.flow-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.flow-shimmer-bar {
+  height: 3px; border-radius: 9999px; overflow: hidden;
+  background: color-mix(in oklch, var(--flow-output) 18%, transparent);
+  background-image: linear-gradient(90deg, transparent, var(--flow-estimate), transparent);
+  background-size: 200% 100%;
+  animation: orca-shimmer 1.8s linear infinite;
+}
