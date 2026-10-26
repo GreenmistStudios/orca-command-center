@@ -11,7 +11,8 @@
   },
   "files": [
     "bin",
-    "dist"
+    "dist",
+    "!dist/**/*.map"
   ],
   "scripts": {
     "dev": "concurrently -k -n server,client -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
@@ -23,7 +24,11 @@
     "start": "node bin/occ.mjs",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json && tsc -p tsconfig.test.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e": "playwright test -c playwright.config.ts",
+    "smoke": "node scripts/smoke.mjs",
+    "perf": "node scripts/perf.mjs",
+    "audit": "node scripts/safety-audit.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
