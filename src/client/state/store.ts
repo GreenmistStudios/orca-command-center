@@ -13,7 +13,7 @@ import { addNotice } from '../shell/notices'
 import { selectDescendants, selectRootSessions } from './selectors'
 import { readUrlSelection, startUrlSync } from './url'
 
-export type ViewId = 'dag' | 'timeline' | 'stream' | 'changes' | 'overview'
+export type ViewId = 'fleet' | 'dag' | 'timeline' | 'stream' | 'changes' | 'overview'
 export type ConnectionState = 'connecting' | 'live' | 'reconnecting' | 'offline'
 
 /** A lazily fetched resource: stale data is kept while refreshing; errors are stored, not thrown. */
@@ -150,7 +150,7 @@ function loadUi(): UiState {
 
 function defaultUi(): UiState {
   return {
-    view: 'dag', selectedRootId: null, selectedSessionId: null, selectedActivityId: null, selectedRunId: null, selectedTaskId: null,
+    view: 'fleet', selectedRootId: null, selectedSessionId: null, selectedActivityId: null, selectedRunId: null, selectedTaskId: null,
     liveOnly: false, harnessFilter: 'all', railQuery: '', theme: 'dark', dockWidth: 384, paletteOpen: false, shortcutsOpen: false,
     streamFilters: { ...DEFAULT_STREAM_FILTERS }, dagDirection: { session: 'RIGHT', orchestration: 'DOWN' }, collapsedWorkspaces: {},
   }
@@ -329,7 +329,7 @@ export const useOcc = create<OccState>()(
         const ui = get().ui
         if (!get().bootstrapped) {
           patchUi({
-            view: url.v ?? ui.view, selectedSessionId: url.s ?? ui.selectedSessionId, selectedRunId: url.r ?? ui.selectedRunId, selectedTaskId: url.t ?? ui.selectedTaskId,
+            view: url.v ?? (url.s || url.r ? 'dag' : ui.view), selectedSessionId: url.s ?? ui.selectedSessionId, selectedRunId: url.r ?? ui.selectedRunId, selectedTaskId: url.t ?? ui.selectedTaskId,
           })
         }
         set({ connection: 'connecting' })

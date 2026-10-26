@@ -1,6 +1,6 @@
 import { Command } from 'cmdk'
 import { Dialog } from 'radix-ui'
-import { Activity, BellRing, Clipboard, FileDiff, FolderGit2, GitBranch, Keyboard, LayoutDashboard, Moon, Radio, Search, SquareChartGantt, Waypoints, X, type LucideIcon } from 'lucide-react'
+import { Activity, BellRing, Clipboard, FileDiff, FolderGit2, GitBranch, Keyboard, LayoutDashboard, Moon, Network, Radio, Search, SquareChartGantt, Waypoints, X, type LucideIcon } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { formatRelative } from '../lib/format'
 import { selectWorkspaceGroups } from '../state/selectors'
@@ -11,11 +11,12 @@ import { Kbd } from '../ui/Pills'
 import { ShortcutsDialog } from './ShortcutsDialog'
 
 const VIEW_ITEMS: Array<{ id: ViewId; label: string; icon: LucideIcon; key: string }> = [
-  { id: 'dag', label: 'DAG', icon: GitBranch, key: '1' },
-  { id: 'timeline', label: 'Timeline', icon: SquareChartGantt, key: '2' },
-  { id: 'stream', label: 'Stream', icon: Activity, key: '3' },
-  { id: 'changes', label: 'Changes', icon: FileDiff, key: '4' },
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard, key: '5' },
+  { id: 'fleet', label: 'Fleet', icon: Network, key: '1' },
+  { id: 'dag', label: 'DAG', icon: GitBranch, key: '2' },
+  { id: 'timeline', label: 'Timeline', icon: SquareChartGantt, key: '3' },
+  { id: 'stream', label: 'Stream', icon: Activity, key: '4' },
+  { id: 'changes', label: 'Changes', icon: FileDiff, key: '5' },
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard, key: '6' },
 ]
 
 const itemCls = 'data-[selected=true]:bg-selection/15 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs outline-none'

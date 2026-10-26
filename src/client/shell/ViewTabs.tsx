@@ -1,9 +1,9 @@
-import { Activity, FileDiff, GitBranch, LayoutDashboard, SquareChartGantt } from 'lucide-react'
+import { Activity, FileDiff, GitBranch, LayoutDashboard, Network, SquareChartGantt } from 'lucide-react'
 import { useOcc, type ViewId } from '../state/store'
 import { TabList } from '../ui/Segmented'
 
-/** The five center views. Exported for the palette/hotkeys (Task-16). */
-export const VIEW_ORDER: ViewId[] = ['dag', 'timeline', 'stream', 'changes', 'overview']
+/** The six center views. Exported for the palette/hotkeys (Task-16). */
+export const VIEW_ORDER: ViewId[] = ['fleet', 'dag', 'timeline', 'stream', 'changes', 'overview']
 
 /** View switcher (`role=tablist`); the DAG tab reads "Run DAG" while an orchestration run is selected. */
 export function ViewTabs() {
@@ -18,6 +18,7 @@ export function ViewTabs() {
       value={view}
       onChange={setView}
       tabs={[
+        { value: 'fleet', label: 'Fleet', icon: <Network size={14} /> },
         { value: 'dag', label: runSelected ? 'Run DAG' : 'DAG', icon: <GitBranch size={14} /> },
         { value: 'timeline', label: 'Timeline', icon: <SquareChartGantt size={14} /> },
         { value: 'stream', label: 'Stream', icon: <Activity size={14} /> },

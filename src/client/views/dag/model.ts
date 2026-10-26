@@ -5,7 +5,7 @@ export const SESSION_SIZE = { w: 264, h: 96 } as const
 export const TASK_SIZE = { w: 240, h: 84 } as const
 export type Direction = 'RIGHT' | 'DOWN'
 
-export interface GraphNode { id: string; type: 'session' | 'task'; w: number; h: number; isolated?: boolean }
+export interface GraphNode { id: string; type: string; w: number; h: number; isolated?: boolean }
 export interface GraphEdge { id: string; source: string; target: string; label: string | null }
 export interface Graph { nodes: GraphNode[]; edges: GraphEdge[] }
 export type Positions = Record<string, { x: number; y: number }>

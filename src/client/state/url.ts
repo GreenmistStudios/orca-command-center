@@ -1,6 +1,6 @@
 import type { OccState, ViewId } from './store'
 
-const VIEWS: readonly ViewId[] = ['dag', 'timeline', 'stream', 'changes', 'overview']
+const VIEWS: readonly ViewId[] = ['fleet', 'dag', 'timeline', 'stream', 'changes', 'overview']
 const MAX_ID = 256
 
 export interface UrlSelection { s: string | null; v: ViewId | null; r: string | null; t: string | null; mock: boolean }
@@ -9,6 +9,11 @@ const clean = (v: string | null): string | null => {
   if (v == null) return null
   const t = v.trim()
   return t && t.length <= MAX_ID ? t : null
+}
+
+/** Initial view for a URL: deep links (`s=`/`r=` without `v=`) open the DAG; otherwise Fleet. */
+export function defaultViewFor(sel: { s: string | null; r: string | null }): ViewId {
+  return sel.s || sel.r ? 'dag' : 'fleet'
 }
 
 /** Parse `?s=&v=&r=&t=&mock=`. Empty/oversized ids and unknown views are ignored. */
@@ -28,7 +33,7 @@ export function buildUrlSearch(ui: OccState['ui'], current: string = location.se
   if (cur.has('mock')) p.set('mock', cur.get('mock') ?? '1')
   if (cur.has('degraded')) p.set('degraded', cur.get('degraded') ?? '1')
   if (ui.selectedSessionId) p.set('s', ui.selectedSessionId)
-  if (ui.view !== 'dag') p.set('v', ui.view)
+  if (ui.view !== defaultViewFor({ s: ui.selectedSessionId, r: ui.selectedRunId })) p.set('v', ui.view)
   if (ui.selectedRunId) p.set('r', ui.selectedRunId)
   if (ui.selectedTaskId) p.set('t', ui.selectedTaskId)
   const s = p.toString()
@@ -59,7 +64,7 @@ export interface UrlTarget {
 /** Apply a parsed URL to the store (popstate). Unknown session ids clear the selection. */
 export function applyUrlSelection(store: UrlTarget, sel: UrlSelection): void {
   const st = store.getState()
-  st.setView(sel.v ?? 'dag')
+  st.setView(sel.v ?? defaultViewFor(sel))
   if (sel.s && st.sessions[sel.s]) st.selectSession(sel.s)
   else if (sel.r) st.selectRun(sel.r)
   else st.selectSession(null)

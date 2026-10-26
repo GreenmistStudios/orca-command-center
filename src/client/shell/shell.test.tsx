@@ -80,6 +80,12 @@ describe('Dock and tabs', () => {
     expect(useOcc.getState().ui.dockWidth).toBe(408)
   })
 
+  it('defaults to Fleet as the first tab', () => {
+    renderWithMockStore(<ViewTabs />)
+    expect(useOcc.getState().ui.view).toBe('fleet')
+    expect(screen.getAllByRole('tab')[0]).toHaveTextContent('Fleet')
+  })
+
   it('view tabs switch views and relabel for runs', async () => {
     renderWithMockStore(<ViewTabs />)
     await userEvent.click(screen.getByRole('tab', { name: /Stream/ }))

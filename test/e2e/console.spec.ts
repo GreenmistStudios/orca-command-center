@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { expect, test, type Page } from 'playwright/test'
 
-const VIEWS = ['DAG', 'Timeline', 'Stream', 'Changes', 'Overview'] as const
+const VIEWS = ['Fleet', 'DAG', 'Timeline', 'Stream', 'Changes', 'Overview'] as const
 
 async function snap(page: Page, project: string, name: string, selector: string) {
   const dir = `test-results/aria-${project}`
@@ -35,7 +35,9 @@ test.describe('console', () => {
     await expect(rows.first()).toBeVisible()
     expect(await rows.count()).toBeGreaterThanOrEqual(1)
 
-    // DAG renders ≥ 1 node.
+    // Fleet is the default landing view; switch to the DAG for the node check.
+    await expect(page.getByTestId('fleet-view')).toBeVisible()
+    await page.getByRole('tab', { name: /^(Run )?DAG$/ }).click()
     await expect(page.getByTestId('dag-view')).toBeVisible()
     await expect(page.locator('.react-flow__node').first()).toBeVisible({ timeout: 30_000 })
 
