@@ -231,7 +231,7 @@ Client: usage slice (ring of samples, estimates) ─ usageBus (non-React) ─▶
 
 | Route | Params | Response |
 |---|---|---|
-| `GET /api/usage` | `scope=fleet\|workflow\|session\|run` (required), `id` (required unless fleet), `windowHours` (1–720; fleet default = server window), `bucketMs` (≥ 1000), `middle=agent\|session\|model` (default agent; session for workflow scope) | `UsageReport` (404 unknown id) |
+| `GET /api/usage` | `scope=fleet\|workflow\|session\|run` (required), `id` (required unless fleet), `windowMinutes` (1–43,200; preferred — sub-hour windows such as 15 m need it) or `windowHours` (1–720; legacy; mutually exclusive with `windowMinutes`; fleet default = server window), `bucketMs` (≥ 1000), `middle=agent\|session\|model` (default agent; session for workflow scope) | `UsageReport` (404 unknown id) |
 | `GET /api/usage/calls` | `scope`, `id`, `before`, `limit` (≤ 2000, default 200) | `UsageCallsPage` |
 | SSE `usage` | — | `{ samples, estimates }`, coalesced per flush: samples by id (highest ledgerSeq), estimates by sessionId (latest `updatedAt`) |
 

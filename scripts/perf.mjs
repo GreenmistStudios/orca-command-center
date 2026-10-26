@@ -17,6 +17,22 @@ try {
   r.check('time to first bootstrap ≤ 1.5 s', bootMs <= 1500, `${bootMs.toFixed(0)} ms (process start → first 200)`)
   r.check('bootstrap payload ≤ 2 MB', boot.bytes <= 2 * 1048576, `${(boot.bytes / 1024).toFixed(0)} KB`)
 
+  // Usage report latency (background ledger seeding may still be running: cold = first call, warm = repeat).
+  const roots = new Map()
+  for (const x of boot.json?.sessions ?? []) roots.set(x.rootId, (roots.get(x.rootId) ?? 0) + 1)
+  const rootId = [...roots.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+  if (rootId) {
+    const q = `/api/usage?scope=workflow&id=${encodeURIComponent(rootId)}`
+    const cold = await getJson(base, q)
+    await sleep(6000) // let background seeding settle
+    await getJson(base, q)
+    const warm = []
+    for (let i = 0; i < 10; i++) warm.push((await getJson(base, q)).ms)
+    warm.sort((a, b) => a - b)
+    r.info('workflow usage report cold', `${cold.ms.toFixed(0)} ms`)
+    r.check('workflow usage report warm ≤ 50 ms', warm[Math.floor(warm.length / 2)] <= 50, `median ${warm[Math.floor(warm.length / 2)].toFixed(1)} ms, max ${warm.at(-1).toFixed(1)} ms`)
+  } else r.skip('usage report latency', 'no sessions')
+
   // SSE latency while measuring idle CPU: connection counts as a client, as in real use.
   const lat = []
   let frames = 0

@@ -14,14 +14,15 @@ let last = 0
 const stats: FrameStats = { fps: 0, lastFrameMs: 0 }
 let visibilityBound = false
 
+// Decided once at module load: the URL-state sync later rewrites the query string and drops `perf=1`.
+let perfOn = false
+try {
+  perfOn = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV) || (typeof window !== 'undefined' && /[?&]perf=1/.test(window.location.search))
+} catch { /* ignore */ }
+
 function publish(): void {
   if (typeof window === 'undefined') return
-  const w = window as unknown as { __occFrameStats?: FrameStats }
-  let on = false
-  try {
-    on = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV) || /[?&]perf=1/.test(window.location.search)
-  } catch { /* ignore */ }
-  if (on) w.__occFrameStats = stats
+  if (perfOn) (window as unknown as { __occFrameStats?: FrameStats }).__occFrameStats = stats
 }
 
 function hidden(): boolean {

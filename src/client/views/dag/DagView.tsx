@@ -231,7 +231,7 @@ function DagCanvas({ layout }: { layout: LayoutFn }) {
           {showPill && wfTree && (
             <WorkflowPill tree={wfTree} burn={burn} onOpen={() => { setTokensPrefs({ scope: 'workflow' }); setView('tokens') }} />
           )}
-          {caption && !showPill && <div data-testid="dag-caption" className={cn(pill, 'absolute top-3 left-1/2 z-10 -translate-x-1/2')}>{caption}</div>}
+          {caption && !showPill && <div data-testid="dag-caption" className={cn(pill, 'absolute top-12 left-1/2 z-10 max-w-[80%] -translate-x-1/2 truncate')}>{caption}</div>}
           <div className={cn(pill, 'absolute bottom-3 left-1/2 z-10 -translate-x-1/2')}>fill = state · stripe = agent</div>
         </>
       )}

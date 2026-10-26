@@ -1050,7 +1050,7 @@ export interface ApiResponses {
   'GET /api/orchestration': OrchestrationSummary
   'GET /api/orchestration/runs/:id': OrchRunDetail
   'GET /api/orchestration/tasks/:id': OrchTaskDetail
-  /** ?scope=fleet|workflow|session|run&id=&windowHours=&bucketMs=&middle=agent|session|model */
+  /** ?scope=fleet|workflow|session|run&id=&windowMinutes= (or legacy windowHours=)&bucketMs=&middle=agent|session|model */
   'GET /api/usage': UsageReport
   /** ?scope=&id=&before=&limit= (≤ LIMITS.usageCallsPageMax) */
   'GET /api/usage/calls': UsageCallsPage

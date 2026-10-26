@@ -122,7 +122,7 @@ diffs, artifacts), **Overview** (tokens, cost, throughput).
 | Key | Action |
 |---|---|
 | `⌘K` / `Ctrl+K` | Command palette |
-| `1`–`5` | DAG · Timeline · Stream · Changes · Overview |
+| `1`–`6` | DAG · Timeline · Stream · Changes · Overview · Tokens |
 | `j` / `k` | Next / previous root session |
 | `J` / `K` | Next / previous session in the cast |
 | `Esc` | Close overlay, then clear task → session → run |
@@ -134,6 +134,47 @@ diffs, artifacts), **Overview** (tokens, cost, throughput).
 | `?` | Shortcuts help |
 
 URL state: `?s=<sessionId>&v=dag|timeline|stream|changes|overview&r=<runId>&t=<taskId>`.
+
+## Token Flow
+
+Token Flow shows where tokens (and money) go across the fleet, live, from a read-only usage ledger
+built from OpenCode message tokens/cost and Copilot session events.
+
+**Definitions**
+
+- **Call:** one metered model request (one assistant step). Copilot sessions also carry a
+  per-model `session-summary` remainder so ended sessions still add up.
+- **Inflow:** input + cache read + cache write tokens. **Outflow:** output + reasoning tokens.
+- **Cache hit:** cache-read share of inflow.
+- **Burn:** cost per hour and tokens per minute over the trailing 5 minutes.
+- **Metered vs estimated:** completed calls are metered (exact, from the harness). In-flight calls
+  show a clearly marked estimate that is replaced by the metered values when the call completes.
+
+**Cost** is a *list-price estimate* (per-model public prices), not an invoice; it can differ from
+what you are billed. Copilot does not report dollars: it reports **AI units (AIU)**, shown instead
+of cost, and cost stays blank (`—`) for those calls.
+
+**Where it appears:** the **Tokens** view (KPIs, Sankey, stream chart, leaderboard, calls ledger,
+CSV export), the **DAG** "Token flow" overlay (edge particles, node rings, workflow pill), the
+inspector **Usage** tab, per-session cost in the rail, the header **burn pill** (click to open the
+Tokens view) and the Overview. Press `6` for the Tokens view. Reduced-motion users get static
+strokes and final counter values instead of particles and tickers.
+
+**Verify accuracy** against a running server (OpenCode sessions must match exactly):
+
+```bash
+node scripts/usage-reconcile.mjs --port 4270
+```
+
+It checks session totals vs `/api/sessions`, workflow totals vs the sum of their sessions, fleet
+window totals vs the sum of sessions, and Copilot sanity. `npm run smoke`, `npm run audit` (no
+transcript text, request bodies or secrets in usage payloads) and `npm run perf` also cover usage.
+Add `?perf=1` to the URL to expose `window.__occFrameStats` (fps) for animation probes.
+
+**Limitations:** the ledger is seeded in the background after start, so totals fill in during the
+first seconds. Fleet scope is limited to 24 h. Live Copilot sessions report tokens only when they
+end (earlier calls are token-less estimates). Auxiliary Copilot models are additive. Costs for
+unpriced models are omitted, not guessed.
 
 ## Troubleshooting
 

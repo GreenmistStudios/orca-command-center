@@ -55,6 +55,33 @@ try {
   scan(`diffs (${nDiffs})`, diffText)
   const act = await getJson(base, '/api/activity?limit=500')
   scan('activity (500)', act.text)
+
+  // Usage payloads: no long strings, no secrets, no request/response bodies.
+  const rootCounts = new Map()
+  for (const x of sessions) rootCounts.set(x.rootId, (rootCounts.get(x.rootId) ?? 0) + 1)
+  const rootId = [...rootCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+  const urls = ['/api/usage?scope=fleet', '/api/usage/calls?scope=fleet&limit=500']
+  if (rootId) urls.push(`/api/usage?scope=workflow&id=${encodeURIComponent(rootId)}`, `/api/usage?scope=session&id=${encodeURIComponent(rootId)}`, `/api/usage/calls?scope=workflow&id=${encodeURIComponent(rootId)}&limit=500`)
+  const copilot = sessions.find((x) => x.harness === 'copilot')
+  if (copilot) urls.push(`/api/usage?scope=session&id=${encodeURIComponent(copilot.id)}`)
+  let usageText = ''
+  let longest = 0
+  const longStrings = []
+  const walkJson = (v, path) => {
+    if (typeof v === 'string') { longest = Math.max(longest, v.length); if (v.length > 200) longStrings.push(`${path} (${v.length})`) }
+    else if (Array.isArray(v)) v.forEach((x, i) => walkJson(x, `${path}[${i}]`))
+    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) walkJson(x, `${path}.${k}`)
+  }
+  for (const u of urls) {
+    const res = await getJson(base, u)
+    if (res.status !== 200) { r.check(`usage fetch ${u}`, false, `status ${res.status}`); continue }
+    usageText += res.text
+    walkJson(res.json, u)
+  }
+  scan(`usage payloads (${urls.length})`, usageText)
+  r.check('no usage string > 200 chars', longStrings.length === 0, longStrings.slice(0, 3).join(', ') || `longest ${longest} chars`)
+  const banned = ['requestMessages', 'responseChunk', 'quotaSnapshots'].filter((w) => usageText.includes(w))
+  r.check('no requestMessages / responseChunk / quotaSnapshots in usage payloads', banned.length === 0, banned.join(', '))
 } catch (e) { r.check('fetch samples', false, e.message) }
 
 // Source scans

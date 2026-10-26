@@ -47,6 +47,17 @@ const orca = await getJson(base, '/api/orca')
 r.check('/api/orca', orca.status === 200, `running=${orca.json?.status?.running} pid=${orca.json?.status?.pid ?? '-'}`)
 const bad = await getJson(base, '/api/sessions?bogus=1')
 r.check('unknown query key → 400', bad.status === 400)
+// Token flow usage API: shape + latency for each scope.
+const SCOPE_KEYS = ['totals', 'rates', 'series', 'byModel', 'byAgent', 'bySession', 'byHarness', 'sankey', 'recentCalls', 'inFlight', 'coverage', 'ledgerSeq']
+const usageScopes = [['fleet', ''], ...(rootId ? [['workflow', rootId], ['session', rootId], ['run', 'none']] : [])]
+for (const [scope, id] of usageScopes) {
+  const u = await getJson(base, `/api/usage?scope=${scope}${id ? `&id=${encodeURIComponent(id)}` : ''}`)
+  if (scope === 'run' && u.status !== 200) { r.check('/api/usage?scope=run unknown id handled', u.status >= 400 && u.status < 500, `status ${u.status}`); continue }
+  r.check(`/api/usage scope=${scope}`, u.status === 200 && has(u.json, SCOPE_KEYS) && has(u.json.totals, ['calls', 'tokens', 'inflow', 'outflow', 'cost']) && u.ms <= 500,
+    `${u.ms.toFixed(0)} ms · ${(u.bytes / 1024).toFixed(0)} KB · ${u.json?.totals?.calls} calls`)
+}
+const uc = await getJson(base, `/api/usage/calls?scope=${rootId ? 'workflow' : 'fleet'}${rootId ? `&id=${encodeURIComponent(rootId)}` : ''}&limit=50`)
+r.check('/api/usage/calls shape', uc.status === 200 && uc.json && typeof uc.json === 'object' && Array.isArray(uc.json.calls ?? uc.json.samples ?? uc.json.items), `${uc.ms.toFixed(0)} ms · keys ${Object.keys(uc.json ?? {}).join(',')}`)
 const host = await new Promise((res) => {
   const q = httpRequest({ host: '127.0.0.1', port: args.port, path: '/api/meta', headers: { host: 'evil.example' } }, (x) => { x.resume(); res(x.statusCode) })
   q.on('error', () => res(0)); q.end()
@@ -57,6 +68,7 @@ const counts2 = {}
 let first = null
 const t0 = Date.now()
 await readStream(base, args['stream-ms'], (f) => { counts2[f.type] = (counts2[f.type] ?? 0) + 1; first ??= f })
+r.info('usage SSE frames', `${counts2.usage ?? 0} in ${args['stream-ms'] / 1000}s`)
 r.check('SSE hello first', first?.type === 'hello', `first frame: ${first?.type}`)
 r.info('SSE frames', `${args['stream-ms'] / 1000}s: ${JSON.stringify(counts2)}`)
 const nonPing = Object.entries(counts2).filter(([k]) => k !== '_ping').reduce((a, [, v]) => a + v, 0)
