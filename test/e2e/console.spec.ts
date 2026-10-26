@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { expect, test, type Page } from 'playwright/test'
 
-const VIEWS = ['Fleet', 'DAG', 'Timeline', 'Stream', 'Changes', 'Overview'] as const
+const VIEWS = ['DAG', 'Timeline', 'Stream', 'Changes', 'Overview'] as const
 
 async function snap(page: Page, project: string, name: string, selector: string) {
   const dir = `test-results/aria-${project}`
@@ -45,6 +45,11 @@ test.describe('console', () => {
     await rows.first().click()
     await expect(page.getByTestId('inspector-header')).toBeVisible()
     await expect(page.locator('[data-testid^="item-"]').first()).toBeVisible({ timeout: 30_000 })
+
+    // The Fleet view opens from the rail header button.
+    await page.getByTestId('rail-fleet-view').click()
+    await expect(page.getByTestId('fleet-view')).toBeVisible()
+    await expect(page.getByText('This view hit an error')).toHaveCount(0)
 
     // Every view tab renders without the error boundary.
     for (const name of VIEWS) {
