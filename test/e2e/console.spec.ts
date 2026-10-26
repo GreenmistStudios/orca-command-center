@@ -71,4 +71,14 @@ test.describe('console', () => {
 
     expect(consoleErrors, consoleErrors.join('\n')).toEqual([])
   })
+  test('Fleet lands first and double-click opens the DAG', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'mock', 'mock project only')
+    await page.goto('/?mock=1')
+    await expect(page.getByTestId('fleet-view')).toBeVisible()
+    await expect(page.getByTestId('fleet-node-project').first()).toBeVisible({ timeout: 30_000 })
+    const session = page.getByTestId('fleet-node-session').first()
+    await expect(session).toBeVisible()
+    await session.dblclick()
+    await expect(page.getByTestId('dag-view')).toBeVisible()
+  })
 })
