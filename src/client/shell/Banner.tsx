@@ -1,4 +1,5 @@
 import { useOcc } from '../state/store'
+import { dismissNotice, useNotices } from './notices'
 import { toneClasses } from '../ui/tones'
 import { cn } from '../lib/cn'
 import type { SourceHealth } from '../../shared/contract'
@@ -15,6 +16,7 @@ export function Banner() {
   const meta = useOcc((s) => s.meta)
   const orca = useOcc((s) => s.orca)
   const orch = useOcc((s) => s.orchestration)
+  const notices = useNotices()
   const lines: Array<{ key: string; node: React.ReactNode }> = []
 
   const status = orca?.status ?? meta?.orca
@@ -38,6 +40,9 @@ export function Banner() {
         </>
       ),
     })
+  }
+  for (const n of notices) {
+    lines.push({ key: `n-${n.key}`, node: <span className="flex items-center gap-2">{n.text}<button type="button" className="focus-ring ml-auto rounded px-1 underline" onClick={() => dismissNotice(n.key)}>Dismiss</button></span> })
   }
   if (lines.length === 0) return null
   return (

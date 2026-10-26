@@ -1,6 +1,6 @@
 import type { StreamEvent } from '../../shared/contract'
 import type { ConnectionState } from '../state/store'
-import { getMockBackend, isMockMode } from './mock'
+import { isMockMode } from './types'
 
 export interface StreamHandle { close(): void }
 
@@ -18,8 +18,10 @@ export function connectStream(args: {
 }): StreamHandle {
   if (isMockMode()) {
     args.onState('live')
-    const off = getMockBackend().connect(args.onEvent)
-    return { close: off }
+    let off: (() => void) | null = null
+    let closed = false
+    void import('./mock').then((m) => { if (!closed) off = m.getMockBackend().connect(args.onEvent) })
+    return { close: () => { closed = true; off?.() } }
   }
   const es = new EventSource(`/api/stream?since=${encodeURIComponent(String(args.since))}`)
   es.onopen = () => args.onState('live')

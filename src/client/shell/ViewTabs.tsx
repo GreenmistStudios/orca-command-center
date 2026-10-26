@@ -14,7 +14,7 @@ export function ViewTabs() {
     <TabList<ViewId>
       aria-label="Views"
       idPrefix="view-tab"
-      className="panel gap-0.5 self-end p-0.5"
+      className="panel max-w-full gap-0.5 self-end overflow-x-auto p-0.5 max-lg:self-stretch"
       value={view}
       onChange={setView}
       tabs={[

@@ -1,13 +1,9 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { useOcc, type ViewId } from '../state/store'
-import { ChangesView } from '../views/changes/ChangesView'
-import { DagView } from '../views/dag/DagView'
-import { OverviewView } from '../views/overview/OverviewView'
-import { StreamView } from '../views/stream/StreamView'
-import { TimelineView } from '../views/timeline/TimelineView'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
+import { Spinner } from '../ui/Spinner'
 
 interface BoundaryState { error: Error | null }
 
@@ -29,6 +25,12 @@ export class ErrorBoundary extends Component<{ children: ReactNode; resetKey?: s
   }
 }
 
+const ChangesView = lazy(() => import('../views/changes/ChangesView').then((m) => ({ default: m.ChangesView })))
+const DagView = lazy(() => import('../views/dag/DagView').then((m) => ({ default: m.DagView })))
+const OverviewView = lazy(() => import('../views/overview/OverviewView').then((m) => ({ default: m.OverviewView })))
+const StreamView = lazy(() => import('../views/stream/StreamView').then((m) => ({ default: m.StreamView })))
+const TimelineView = lazy(() => import('../views/timeline/TimelineView').then((m) => ({ default: m.TimelineView })))
+
 const VIEWS: Record<ViewId, () => ReactNode> = {
   dag: () => <DagView />,
   timeline: () => <TimelineView />,
@@ -41,8 +43,10 @@ const VIEWS: Record<ViewId, () => ReactNode> = {
 export function CenterView() {
   const view = useOcc((s) => s.ui.view)
   return (
-    <div role="tabpanel" aria-label={`${view} view`} data-testid="center-view" className="panel bg-panel-solid min-h-0 flex-1 overflow-hidden">
-      <ErrorBoundary resetKey={view}>{VIEWS[view]()}</ErrorBoundary>
+    <div role="tabpanel" aria-label={`${view} view`} id="center-view" data-testid="center-view" className="panel bg-panel-solid min-h-0 flex-1 overflow-hidden">
+      <ErrorBoundary resetKey={view}>
+        <Suspense fallback={<div className="flex h-full items-center justify-center"><Spinner /></div>}>{VIEWS[view]()}</Suspense>
+      </ErrorBoundary>
     </div>
   )
 }

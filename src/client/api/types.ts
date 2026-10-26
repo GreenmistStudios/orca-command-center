@@ -19,3 +19,8 @@ export interface GetOptions {
   path?: Record<string, string>
   signal?: AbortSignal
 }
+
+/** True when the URL asks for the in-browser mock backend (`?mock=1`). Kept here so the mock can be code-split. */
+export function isMockMode(search: string = typeof location !== 'undefined' ? location.search : ''): boolean {
+  return /[?&]mock=/.test(search) && !/[?&]mock=0\b/.test(search)
+}

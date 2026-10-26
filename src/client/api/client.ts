@@ -1,6 +1,5 @@
 import type { ApiError, ApiResponses, ApiRoute } from '../../shared/contract'
-import { getMockBackend, isMockMode } from './mock'
-import { ApiRequestError, type GetOptions } from './types'
+import { ApiRequestError, isMockMode, type GetOptions } from './types'
 
 export { ApiRequestError } from './types'
 export type { GetOptions } from './types'
@@ -38,6 +37,7 @@ async function realGet<R extends ApiRoute>(route: R, opts: GetOptions = {}): Pro
 /** Typed API. In `?mock=1` mode requests are served by the in-browser mock backend. */
 export const api = {
   get<R extends ApiRoute>(route: R, opts?: GetOptions): Promise<ApiResponses[R]> {
-    return isMockMode() ? getMockBackend().get(route, opts) : realGet(route, opts)
+    if (!isMockMode()) return realGet(route, opts)
+    return import('./mock').then((m) => m.getMockBackend().get(route, opts))
   },
 }

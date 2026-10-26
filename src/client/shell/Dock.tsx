@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { motion } from 'motion/react'
 import { AttentionPanel } from '../attention/AttentionPanel'
 import { Inspector } from '../inspector/Inspector'
@@ -13,6 +13,16 @@ export function Dock() {
   const width = useOcc((s) => s.ui.dockWidth)
   const setWidth = useOcc((s) => s.setDockWidth)
   const hasSel = useOcc((s) => s.ui.selectedSessionId != null || s.ui.selectedTaskId != null)
+  const asideRef = useRef<HTMLElement | null>(null)
+  const first = useRef(true)
+  // Move focus to the new content's title when the dock switches between Inspector and Attention.
+  useEffect(() => {
+    if (first.current) { first.current = false; return }
+    const t = asideRef.current?.querySelector<HTMLElement>('[data-inspector-title],h1,h2,h3')
+    if (!t) return
+    t.tabIndex = -1
+    t.focus({ preventScroll: true })
+  }, [hasSel])
   const drag = useRef<{ x: number; w: number } | null>(null)
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
@@ -27,13 +37,14 @@ export function Dock() {
 
   return (
     <motion.aside
+      ref={asideRef}
       initial={{ opacity: 0, x: 18 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ type: 'spring', stiffness: 380, damping: 34, mass: 0.9 }}
       aria-label={hasSel ? 'Inspector' : 'Attention'}
       data-testid="dock"
       style={{ ['--dock-w' as string]: `${width}px` }}
-      className="panel relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden max-lg:max-h-[45vh] lg:w-[var(--dock-w)]"
+      className="panel relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden max-lg:max-h-[min(60dvh,32rem)] lg:w-[var(--dock-w)]"
     >
       <div
         role="separator"

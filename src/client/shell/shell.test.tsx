@@ -61,13 +61,15 @@ describe('Banner', () => {
 })
 
 describe('Dock and tabs', () => {
-  it('switches between the inspector and attention panel', () => {
+  it('switches between the inspector and attention panel', async () => {
+    history.replaceState(null, '', '/?mock=1') // route fetchTask through the mock backend
     renderWithMockStore(<Dock />)
-    expect(screen.getByText(/Inspector — Task-11/)).toBeInTheDocument()
+    expect(screen.getByTestId('session-inspector')).toBeInTheDocument()
     act(() => useOcc.getState().selectSession(null))
-    expect(screen.getByText(/Attention panel — Task-15/)).toBeInTheDocument()
+    expect(screen.getByTestId('attention-panel')).toBeInTheDocument()
     act(() => useOcc.getState().selectTask('t3'))
-    expect(screen.getByText(/Inspector — Task-11/)).toBeInTheDocument()
+    // The task inspector shows a skeleton while fetchTask resolves.
+    expect(await screen.findByTestId('task-inspector')).toBeInTheDocument()
   })
 
   it('resizes with the keyboard within bounds', async () => {

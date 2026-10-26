@@ -4,12 +4,17 @@ import { useEffect } from 'react'
 import { useGlobalHotkeys } from './hooks/useGlobalHotkeys'
 import { CommandPalette } from './palette/CommandPalette'
 import { Shell } from './shell/Shell'
+import { useAttentionBadge, useUrlRestore } from './shell/useAppEffects'
+import { readUrlSelection } from './state/url'
 import { useOcc } from './state/store'
 
 let started = false
+const initialUrl = readUrlSelection()
 
 export function App() {
   useGlobalHotkeys()
+  useAttentionBadge()
+  useUrlRestore(initialUrl)
   useEffect(() => {
     if (started) return
     started = true

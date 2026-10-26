@@ -12,7 +12,7 @@ import {
   artifactsOf, buildMockWorld, fileChangesOf, metaOf, MOCK_IDS, mulberry32, orchestrationSummary, recomputeAll, recomputeSession,
   toolInfo, type MockWorld,
 } from './mock-data'
-import { ApiRequestError, type GetOptions } from './types'
+import { ApiRequestError, isMockMode, type GetOptions } from './types'
 
 export { MOCK_IDS } from './mock-data'
 
@@ -33,9 +33,7 @@ export interface MockBackend {
 
 export interface MockOptions { now?: number; seed?: number; live?: boolean; scenario?: 'healthy' | 'degraded' }
 
-export function isMockMode(search: string = typeof location !== 'undefined' ? location.search : ''): boolean {
-  return /[?&]mock=/.test(search) && !/[?&]mock=0\b/.test(search)
-}
+export { isMockMode }
 
 let singleton: MockBackend | null = null
 /** Shared backend for the browser session (`?mock=1`). */

@@ -1,12 +1,13 @@
 import { useOcc } from '../state/store'
-import { selectSelectedSession } from '../state/selectors'
-import { EmptyState } from '../ui/EmptyState'
+import { EmptyState } from '../ui'
+import { SessionInspector } from './SessionInspector'
+import { TaskInspector } from './TaskInspector'
 
-/** PLACEHOLDER — Task-11 replaces this with the Inspector. Fills the dock (the dock provides the panel chrome). */
+/** Right-dock inspector: a session (transcript/files/todos/info) or an orchestration task. Fills the dock. */
 export function Inspector() {
-  const session = useOcc(selectSelectedSession)
   const taskId = useOcc((s) => s.ui.selectedTaskId)
-  return (
-    <EmptyState title="Inspector — Task-11" hint={taskId ? `Task ${taskId}` : session ? `${session.title} (${session.id})` : undefined} />
-  )
+  const sessionId = useOcc((s) => s.ui.selectedSessionId)
+  if (taskId) return <TaskInspector key={taskId} taskId={taskId} />
+  if (sessionId) return <SessionInspector key={sessionId} id={sessionId} />
+  return <EmptyState title="Nothing selected" hint="Select a session or task to inspect it." />
 }

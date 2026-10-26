@@ -1,5 +1,6 @@
 import { Command, Database, Moon, Radar, Sun } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
+import { useCompact } from '../hooks/useCompact'
 import { useNow } from '../hooks/useNow'
 import { formatClock, formatRelative } from '../lib/format'
 import { cn } from '../lib/cn'
@@ -99,6 +100,23 @@ function SourceChips() {
   )
 }
 
+function SourcesPopover() {
+  const sources = useOcc((s) => s.meta?.sources)
+  const last = useOcc((s) => s.lastEventAt)
+  const now = useNow(1000)
+  return (
+    <Popover
+      align="end"
+      className="w-80"
+      trigger={<Button data-testid="sources-button" className="gap-1.5"><Database size={12} />Sources</Button>}
+    >
+      <div className="section-label mb-1">Sources</div>
+      <ul>{(sources ?? []).map((s) => <SourceRow key={s.id} s={s} />)}</ul>
+      {last && <div className="text-muted-foreground pt-2">Last event {formatRelative(last, now) === 'now' ? 'just now' : formatRelative(last, now)}</div>}
+    </Popover>
+  )
+}
+
 function LastEvent() {
   const last = useOcc((s) => s.lastEventAt)
   const now = useNow(1000)
@@ -111,13 +129,14 @@ export function Header() {
   const connection = useOcc((s) => s.connection)
   const theme = useOcc((s) => s.ui.theme)
   const toggleTheme = useOcc((s) => s.toggleTheme)
+  const compact = useCompact()
   const setPaletteOpen = useOcc((s) => s.setPaletteOpen)
   return (
     <motion.header
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={SPRING}
-      className="panel flex h-13 shrink-0 items-center gap-3 px-3"
+      className="panel flex h-13 shrink-0 items-center gap-3 px-3 max-lg:overflow-x-auto"
     >
       <div className="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-md" style={{ boxShadow: '0 0 18px -4px var(--selection)' }}>
         <Radar size={14} />
@@ -128,8 +147,7 @@ export function Header() {
       <StreamPill connection={connection} />
       <FleetPulse />
       <div className="text-muted-foreground ml-auto flex items-center gap-3 text-[11px]">
-        <SourceChips />
-        <LastEvent />
+        {compact ? <SourcesPopover /> : <><SourceChips /><LastEvent /></>}
         <Button onClick={() => setPaletteOpen(true)} className="gap-1.5" aria-label="Search (⌘K)"><Command size={12} />Search</Button>
         <IconButton aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={toggleTheme}>
           <AnimatePresence mode="wait" initial={false}>
