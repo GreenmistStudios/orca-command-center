@@ -46,6 +46,7 @@ export interface UiState {
   railQuery: string
   theme: 'light' | 'dark'
   dockWidth: number
+  railWidth: number
   paletteOpen: boolean
   shortcutsOpen: boolean
   streamFilters: StreamFilters
@@ -56,6 +57,8 @@ export interface UiState {
 export const ACTIVITY_RING_MAX = 20_000
 export const DOCK_MIN = 320
 export const DOCK_MAX = 640
+export const RAIL_MIN = 224
+export const RAIL_MAX = 480
 
 export interface OccState {
   meta: ServerMeta | null
@@ -108,6 +111,7 @@ export interface OccState {
   setTheme(t: 'light' | 'dark'): void
   toggleTheme(): void
   setDockWidth(px: number): void
+  setRailWidth(px: number): void
   setPaletteOpen(v: boolean): void
   setShortcutsOpen(v: boolean): void
   setStreamFilters(p: Partial<StreamFilters>): void
@@ -140,6 +144,7 @@ function loadUi(): UiState {
     ...defaultUi(),
     theme: getStored<'light' | 'dark'>('occ-theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light') === 'light' ? 'light' : 'dark',
     dockWidth: clampDock(getStored<number>('occ-dock-width', 384)),
+    railWidth: clampRail(getStored<number>('occ-rail-width', 288)),
     liveOnly: getStored('occ-live-only', false),
     harnessFilter: getStored<Harness | 'all'>('occ-harness-filter', 'all'),
     streamFilters: { ...DEFAULT_STREAM_FILTERS, ...stored, paused: false },
@@ -151,12 +156,13 @@ function loadUi(): UiState {
 function defaultUi(): UiState {
   return {
     view: 'dag', selectedRootId: null, selectedSessionId: null, selectedActivityId: null, selectedRunId: null, selectedTaskId: null,
-    liveOnly: false, harnessFilter: 'all', railQuery: '', theme: 'dark', dockWidth: 384, paletteOpen: false, shortcutsOpen: false,
+    liveOnly: false, harnessFilter: 'all', railQuery: '', theme: 'dark', dockWidth: 384, railWidth: 288, paletteOpen: false, shortcutsOpen: false,
     streamFilters: { ...DEFAULT_STREAM_FILTERS }, dagDirection: { session: 'RIGHT', orchestration: 'DOWN' }, collapsedWorkspaces: {},
   }
 }
 
 const clampDock = (n: number) => (Number.isFinite(n) ? Math.min(DOCK_MAX, Math.max(DOCK_MIN, Math.round(n))) : 384)
+const clampRail = (n: number) => (Number.isFinite(n) ? Math.min(RAIL_MAX, Math.max(RAIL_MIN, Math.round(n))) : 288)
 
 function emptyData() {
   return {
@@ -511,6 +517,7 @@ export const useOcc = create<OccState>()(
       setTheme(t) { patchUi({ theme: t }) },
       toggleTheme() { patchUi({ theme: get().ui.theme === 'dark' ? 'light' : 'dark' }) },
       setDockWidth(px) { patchUi({ dockWidth: clampDock(px) }) },
+      setRailWidth(px) { patchUi({ railWidth: clampRail(px) }) },
       setPaletteOpen(v) { patchUi({ paletteOpen: v }) },
       setShortcutsOpen(v) { patchUi({ shortcutsOpen: v }) },
       setStreamFilters(p) { patchUi({ streamFilters: { ...get().ui.streamFilters, ...p } }) },
@@ -592,6 +599,7 @@ function applyTheme(t: 'light' | 'dark') {
 applyTheme(useOcc.getState().ui.theme)
 useOcc.subscribe((s) => s.ui.theme, (t) => { applyTheme(t); setStored('occ-theme', t) })
 useOcc.subscribe((s) => s.ui.dockWidth, (v) => setStored('occ-dock-width', v))
+useOcc.subscribe((s) => s.ui.railWidth, (v) => setStored('occ-rail-width', v))
 useOcc.subscribe((s) => s.ui.liveOnly, (v) => setStored('occ-live-only', v))
 useOcc.subscribe((s) => s.ui.harnessFilter, (v) => setStored('occ-harness-filter', v))
 useOcc.subscribe((s) => s.ui.streamFilters, (v) => setStored('occ-stream-filters', { ...v, paused: false }))
