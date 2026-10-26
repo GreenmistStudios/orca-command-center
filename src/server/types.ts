@@ -48,6 +48,11 @@ import type {
   TranscriptPage,
   AttentionItem,
   WorktreeInfo,
+  UsageCallsPage,
+  UsageEstimate,
+  UsageReport,
+  UsageSample,
+  UsageScope,
 } from '../shared/contract.js'
 
 /* ─────────────────────────────── Runtime ─────────────────────────────── */
@@ -172,6 +177,11 @@ export type HarnessUpdate =
   | { type: 'todos'; sessionId: string; todos: TodoItem[] }
   /** The incremental cursor was lost (e.g. log truncated). The store should reload from queries. */
   | { type: 'reset'; reason: string }
+  /**
+   * Token flow (features/token-flow): newly metered calls (ledgerSeq 0, rootId may be null) and
+   * in-flight estimates (one per session; inFlight:false ends one).
+   */
+  | { type: 'usage'; samples: UsageSample[]; estimates: UsageEstimate[] }
 
 export interface ActivityQueryOptions {
   kinds?: ActivityKind[]
@@ -201,6 +211,12 @@ export interface HarnessSource extends SourceBase {
   getPart(id: string): PartDetail | null
   getDiff(activityId: string): FileDiff | null
   getFileChanges(sessionIds: string[], sinceMs?: EpochMs): FileChange[]
+  /**
+   * Token flow: every metered call of the given sessions (optionally only ts >= sinceMs), ordered
+   * by ts ascending, with ledgerSeq 0 and rootId null. Optional so adapters without usage data
+   * still satisfy the interface.
+   */
+  getUsageSamples?(sessionIds: string[], options?: { sinceMs?: EpochMs }): UsageSample[]
 }
 
 /* Orca sources ------------------------------------------------------------------------------- */
@@ -287,6 +303,25 @@ export interface StoreReader {
   orchestration(): OrchestrationSummary
   orchestrationRun(id: string): OrchRunDetail | null
   orchestrationTask(id: string): OrchTaskDetail | null
+  /** Token flow report for a scope (null when the scope id is unknown). Routes answer 503 when absent. */
+  usage?(query: UsageQuery): UsageReport | null
+  /** Paged call ledger for a scope (null when the scope id is unknown). */
+  usageCalls?(query: UsageCallsQuery): UsageCallsPage | null
+}
+
+export interface UsageQuery {
+  scope: UsageScope
+  /** null = all time for workflow/session/run; fleet defaults to config.windowMs. */
+  windowMs?: number | null
+  bucketMs?: number
+  middle?: 'agent' | 'session' | 'model'
+}
+
+export interface UsageCallsQuery {
+  scope: UsageScope
+  /** Opaque cursor from a previous UsageCallsPage.before. */
+  before?: string
+  limit: number
 }
 
 export interface Store extends StoreReader {

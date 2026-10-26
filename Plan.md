@@ -551,3 +551,9 @@ verifies everything together on real data.
 - Run archives (export/replay a root tree like orca-viz `--archive`).
 - Cost budgets & alerts; desktop notifications for attention items.
 - Remote viewing via `tailscale serve` recipe (documented, not automated).
+
+## 16. Feature plans
+
+| Feature | Plan | Tasks | Status |
+|---|---|---|---|
+| Token Flow — per-call token ledger, cost, burn rate, workflow/run/fleet rollups, animated in/out flow | [`features/token-flow/Plan.md`](features/token-flow/Plan.md) | Task-18 … Task-28 (`features/token-flow/tasks/`) | in progress on `geoff-powell/token-flow` |

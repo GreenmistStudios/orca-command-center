@@ -416,3 +416,76 @@ Plain, specific, honest. Prefer "Orca isn't running; showing last-known state" o
 Always say where a fact came from when it is inferred ("state from transcript", "from Orca hook").
 Durations: `12s`, `3m`, `2h 5m`, `1d 3h`. Costs: `$0.42` (2 decimals, `<$0.01` when tiny).
 Tokens: `113.5k`, `2.1M`.
+
+## 15. Token flow (feature: `features/token-flow`)
+
+### 15.1 Flow colors (`--flow-*`, add to `:root` / `.dark` and map in `@theme inline`)
+
+| Token | Meaning | Light | Dark |
+|---|---|---|---|
+| `--flow-input` | fresh (uncached) input | `#0284c7` | `#38bdf8` |
+| `--flow-cache-read` | cache read | `#0891b2` | `#67e8f9` |
+| `--flow-cache-write` | cache write | `#4f46e5` | `#a5b4fc` |
+| `--flow-output` | output | `#059669` | `#34d399` |
+| `--flow-reasoning` | reasoning | `#7c3aed` | `#c4b5fd` |
+| `--flow-cost` | cost / burn | `#d97706` | `#fbbf24` |
+| `--flow-estimate` | streaming estimate | `color-mix(in oklch, var(--flow-output) 55%, transparent)` | same |
+
+Inflow = blue family (input → cache read → cache write), outflow = green/violet. Particles use
+the link's flow color at alpha .9 with `shadowBlur` 6 (dark) / 3 (light). Sankey links: flow
+color at 28% (hover 55%); nodes: `bg-panel-solid` cards with a 3px left stripe in the node's
+color (middle nodes use the agent palette §7.1).
+
+### 15.2 Motion tokens
+
+| Token | Value |
+|---|---|
+| Counter spring | `{ stiffness: 220, damping: 26, mass: 0.8 }` per digit column |
+| Bar/FLIP spring | `{ stiffness: 380, damping: 34, mass: 0.9 }` (same as panels) |
+| Gauge spring | `{ stiffness: 160, damping: 22 }` |
+| Delta chip | enter `{ y: 6, opacity: 0 }` → `{ y: -10, opacity: 1 }` 180 ms, hold 700 ms, exit `{ y: -22, opacity: 0 }` 320 ms ease-out |
+| Particle speed | link traverse 1.6–2.4 s (shorter for higher rates), ease-in-out-sine on progress |
+| Particle spawn | rate/link = `clamp(log10(1 + tokensPerSec) * 6, 0, 30)` per second; burst per call `min(24, 4 + 3·log10(tokens))` |
+| EWMA | `rate ← rate·e^(−Δt/τ) + tokens/τ`, τ = 8 s |
+| Stream chart | scroll continuously (x = time); new bucket heights ease from 0 over 400 ms; now-line pulse 2 s |
+| In-flight → metered | estimate cross-fades to metered over 250 ms; `check` tick scales .6 → 1 then fades after 1.5 s |
+| Burn pill pulse | `box-shadow` glow 0 → 12px → 0 over 2 s, infinite while any call is in flight |
+| Reduced motion | no particles/chips/pulses; counters and gauges snap; charts redraw at 1 Hz |
+
+### 15.3 Components (kit: `src/client/ui/flow/`)
+
+- **Odometer** — inline-flex of digit columns (`0–9` stacked, `translateY(-n·1em)`), tabular
+  nums, mono for metric tiles; separators/decimals static; unit suffix (`k`, `M`, `$`) outside
+  the columns. Props: `value`, `format` (`tokens` | `cost` | `int` | `percent`), `size`. The
+  element carries `aria-label` with the exact value; digits are `aria-hidden`.
+- **KPI tile** — `.panel` on `bg-panel-solid`, `px-4 py-3`; label 10px uppercase tracking .1em
+  muted; value 22px semibold mono odometer; sub-line 11px muted (breakdown with flow-color dots);
+  delta chips stack at the top-right; an optional sparkline at the bottom (24px tall).
+- **Delta chip** — `rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums` on
+  `color-mix(in oklch, FLOW 18%, transparent)` with FLOW ink; content like `+12.4k in`.
+- **Sankey** — 3 columns; node cards 140×(value-proportional, min 22px) with label 11px + value
+  10px muted; links = cubic Bézier ribbons; hover dims other links to 12%; selected middle node
+  outlined `--selection`. Particle canvas sits above the SVG (pointer-events none).
+- **Mirrored stream chart** — inflow stacked above the axis (input, cache read, cache write),
+  outflow below (output, reasoning); axis line `--panel-border`; y labels 10px muted with
+  symmetric scale; crosshair `--muted-foreground` 1px dashed; tooltip `.panel` 11px; brush =
+  `bg-selection/15` with `--selection` edges; call markers as 2px ticks on the axis.
+- **Radial gauge** — 56px, 6px stroke, track `--muted`, arc in `--flow-cache-read`; center
+  value 13px semibold; thresholds: < 40% `--status-failed`, < 70% `--flow-cost`, else cache color.
+- **Animated bar list** — rows 28px: label (agent monogram/model), bar (flow-split: inflow
+  share blue, outflow share green, or cost amber in Cost units), value right (tabular-nums);
+  `motion` `layout` reorder; rank delta glyph `▲2` / `▼1` flashes 400 ms.
+- **In-flight meter** — shimmer bar (`orca-shimmer`) 3px tall + "≈ 1.2k out · streaming" in
+  `--flow-estimate` with dashed underline; becomes the metered value on completion.
+- **DAG overlay** — node ring: two concentric 2px arcs outside the card (`inset:-6px`), inflow
+  arc `--flow-input`, outflow arc `--flow-output`, length ∝ node share of workflow; cost ticker
+  in the node's row 3; edge dots r=2.5 via `animateMotion` (cyan down, emerald up).
+- **Burn pill** (header) — `statusPill` + `flame` icon in `--flow-cost`; text "$3.40/h · 42k
+  tok/min"; neutral when nothing is running.
+- **Cost disclaimer** — an `info` icon (12px) next to every cost with tooltip: "Estimated by the
+  harness at public list prices. GitHub Copilot bills by subscription/premium requests."
+
+### 15.4 Icons
+
+`coins` Tokens view · `arrow-down-to-line` inflow · `arrow-up-from-line` outflow · `database-zap`
+cache · `flame` burn · `timer` TTFT · `gauge` throughput · `receipt` cost · `download` CSV.

@@ -137,6 +137,14 @@ export const LIMITS = {
   activityPageMax: 5_000,
   transcriptPageDefault: 40,
   transcriptPageMax: 200,
+  /** Token flow (features/token-flow): calls embedded in a UsageReport. */
+  usageReportCalls: 200,
+  /** Max page size for GET /api/usage/calls. */
+  usageCallsPageMax: 2_000,
+  /** Sankey middle column: top N groups, the rest merged into "Other". */
+  usageSankeyMaxMiddle: 12,
+  /** Max buckets in a usage series. */
+  usageSeriesMaxBuckets: 240,
 } as const
 
 /* ─────────────────────────────── Usage ───────────────────────────────── */
@@ -319,6 +327,11 @@ export interface SessionSummary {
   orca: OrcaLink | null
   /** Harness-specific facts for the Info tab, e.g. { label: 'Premium requests', value: '12' }. */
   facts: Array<{ label: string; value: string }>
+  /**
+   * Token-flow rollup from the usage ledger (features/token-flow). Absent until the session's
+   * calls are loaded; `tokens`/`cost` above remain the harness-reported session totals.
+   */
+  usage?: SessionUsage
 }
 
 export interface TodoItem {
@@ -697,6 +710,238 @@ export interface FleetStats {
     edits: number
     errors: number
   }>
+  /**
+   * Calls metered inside the window (features/token-flow). Unlike `tokens`/`cost` above — which
+   * are lifetime totals of sessions active in the window — these count only tokens consumed
+   * within the window.
+   */
+  usage?: { totals: UsageTotals; rates: UsageRates }
+}
+
+/* ─────────────────────── Token usage & flow (features/token-flow) ─────────────────────── */
+
+/**
+ * One metered LLM call — the atomic unit of token accounting.
+ * - OpenCode: one `step-finish` part (verified: Σ step-finish == session table totals, exactly).
+ * - Copilot CLI: one `model.model_call_success` event (`responseUsage`, `copilotUsage`).
+ * Token semantics: `tokens.input` = fresh (uncached) input; `cacheRead`/`cacheWrite` are the cached
+ * portions of the prompt; `output` excludes `reasoning`.
+ * inflow = input + cacheRead + cacheWrite · outflow = output + reasoning (src/shared/usage-math.ts).
+ */
+export interface UsageSample {
+  /** 'opencode:<step-finish part id>' | 'copilot:<sessionId>:call:<callId>' */
+  id: string
+  harness: Harness
+  sessionId: string
+  /** Root of the session's workflow (filled by the store; sources may leave null). */
+  rootId: string | null
+  /** Monotonic ingest sequence assigned by the server ledger (sources set 0). */
+  ledgerSeq: number
+  /** When the call finished (the metering time). */
+  ts: EpochMs
+  /** When the call started, when known. */
+  startTs: EpochMs | null
+  model: ModelRef | null
+  agent: string | null
+  tokens: TokenUsage
+  /** USD as computed by the harness from public list prices; null when the harness reports none. */
+  cost: number | null
+  /** GitHub Copilot AI units for this call (total_nano_aiu / 1e9); null when not reported. */
+  aiu: number | null
+  /** Time to first token (ms), when reported or derivable. */
+  ttftMs: number | null
+  /** Wall time of the call (ms). */
+  durationMs: number | null
+  /** Finish reason, e.g. 'tool-calls', 'stop'. */
+  finish: string | null
+  /** Provenance, e.g. 'opencode.step-finish', 'copilot.model_call_success'. */
+  source: string
+}
+
+/**
+ * Live estimate for an LLM call that is still streaming: generated tokens so far ≈ streamed
+ * characters / 4. Estimates are never billed or summed into totals; the metered UsageSample that
+ * ends the call supersedes them.
+ */
+export interface UsageEstimate {
+  /** At most one in-flight call per session: keyed by sessionId. */
+  sessionId: string
+  rootId: string | null
+  harness: Harness
+  /** Call start (step-start / model_call_started) or first streamed chunk. */
+  startedAt: EpochMs
+  updatedAt: EpochMs
+  estOutputTokens: number
+  /** false = the call ended (metered sample arrived or the turn stopped); clients drop it. */
+  inFlight: boolean
+}
+
+export interface UsageTotals {
+  calls: number
+  tokens: TokenUsage
+  /** input + cacheRead + cacheWrite */
+  inflow: number
+  /** output + reasoning */
+  outflow: number
+  /** Σ reported USD cost (harness list-price estimate). */
+  cost: number
+  /** Calls that reported a cost. 0 ⇒ show "cost not reported", never "$0". */
+  costedCalls: number
+  aiu: number
+  /** cacheRead / inflow, or null when inflow is 0. */
+  cacheHitRate: number | null
+  firstTs: EpochMs | null
+  lastTs: EpochMs | null
+}
+
+/** Sliding-window rates ending at `asOf`. */
+export interface UsageRates {
+  windowMs: number
+  asOf: EpochMs
+  inflowPerMin: number
+  outflowPerMin: number
+  costPerHour: number
+  callsPerMin: number
+}
+
+export type UsageScopeKind = 'fleet' | 'workflow' | 'session' | 'run'
+
+export interface UsageScope {
+  kind: UsageScopeKind
+  /** rootId (workflow) | sessionId (session) | runId (run) | null (fleet). */
+  id: string | null
+}
+
+export interface UsageBucket {
+  /** Bucket start. */
+  t: EpochMs
+  input: number
+  cacheRead: number
+  cacheWrite: number
+  output: number
+  reasoning: number
+  cost: number
+  aiu: number
+  calls: number
+}
+
+export type UsageBreakdownKind = 'model' | 'agent' | 'session' | 'harness'
+
+export interface UsageBreakdownRow {
+  key: string
+  label: string
+  kind: UsageBreakdownKind
+  /** kind 'session': the session id (click → select). */
+  sessionId: string | null
+  harness: Harness | null
+  totals: UsageTotals
+  /** Share of the scope's tokens (inflow + outflow), 0..1. */
+  share: number
+}
+
+export type FlowKind = 'input' | 'cacheRead' | 'cacheWrite' | 'output' | 'reasoning'
+
+export interface SankeyNode {
+  id: string
+  label: string
+  /** 0 = sources (input kinds), 1 = middle (agents/sessions/models), 2 = sinks (output kinds). */
+  column: 0 | 1 | 2
+  kind: 'source' | 'middle' | 'sink'
+  /** Sources and sinks: their flow kind. */
+  flow: FlowKind | null
+  /** Middle nodes grouped by session: the session id. */
+  sessionId: string | null
+  /** Tokens through the node. */
+  value: number
+  /** Middle nodes: Σ cost of the group (null when not reported). */
+  cost: number | null
+}
+
+export interface SankeyLink {
+  id: string
+  source: string
+  target: string
+  flow: FlowKind
+  /** Tokens. */
+  value: number
+}
+
+export interface UsageSankey {
+  middle: 'agent' | 'session' | 'model'
+  nodes: SankeyNode[]
+  links: SankeyLink[]
+}
+
+/** What a scope's tokens produced. */
+export interface UsageOutput {
+  fileChanges: number
+  filesTouched: number
+  additions: number
+  deletions: number
+  artifacts: number
+  pullRequests: number
+}
+
+export interface UsageCoverage {
+  sessions: number
+  sessionsWithUsage: number
+  /** Human sentences, e.g. "3 Copilot CLI sessions predate per-call usage events." */
+  notes: string[]
+}
+
+export interface UsageReport {
+  scope: UsageScope
+  /** Window applied to calls; null = every call of the scope's sessions (all time). */
+  windowMs: number | null
+  generatedAt: EpochMs
+  /** Ledger watermark: live samples with a higher ledgerSeq are not included yet. */
+  ledgerSeq: number
+  totals: UsageTotals
+  rates: UsageRates
+  series: { bucketMs: number; buckets: UsageBucket[] }
+  byModel: UsageBreakdownRow[]
+  byAgent: UsageBreakdownRow[]
+  bySession: UsageBreakdownRow[]
+  byHarness: UsageBreakdownRow[]
+  sankey: UsageSankey
+  /** Most recent calls (≤ LIMITS.usageReportCalls), oldest → newest. Full ledger: /api/usage/calls. */
+  recentCalls: UsageSample[]
+  /** Calls in flight in scope. */
+  inFlight: UsageEstimate[]
+  /** What the scope produced (workflow/session scopes); null for fleet/run. */
+  output: UsageOutput | null
+  coverage: UsageCoverage
+}
+
+export interface UsageCallsPage {
+  /** Ordered oldest → newest. */
+  calls: UsageSample[]
+  /** Cursor for the previous (older) page, or null. */
+  before: string | null
+  hasMore: boolean
+}
+
+/** Per-session usage rollup carried on SessionSummary.usage. */
+export interface SessionUsage {
+  calls: number
+  inflow: number
+  outflow: number
+  aiu: number
+  cacheHitRate: number | null
+  /** Root sessions only: the whole workflow (root + every descendant). */
+  tree: {
+    sessions: number
+    calls: number
+    tokens: TokenUsage
+    inflow: number
+    outflow: number
+    cost: number
+    costedCalls: number
+    aiu: number
+  } | null
+  /** Live sessions only: 5-minute sliding-window rates. */
+  rates: UsageRates | null
+  inFlight: UsageEstimate | null
 }
 
 /* ─────────────────────────── Meta & sources ──────────────────────────── */
@@ -760,6 +1005,8 @@ export type StreamEvent =
   | { type: 'orchestration'; seq: number; summary: OrchestrationSummary; changedRunIds: string[] }
   | { type: 'stats'; seq: number; stats: FleetStats }
   | { type: 'meta'; seq: number; meta: ServerMeta }
+  /** Metered calls (upsert by id) and in-flight estimates (latest per session). */
+  | { type: 'usage'; seq: number; samples: UsageSample[]; estimates: UsageEstimate[] }
 
 export type StreamEventType = StreamEvent['type']
 
@@ -803,6 +1050,10 @@ export interface ApiResponses {
   'GET /api/orchestration': OrchestrationSummary
   'GET /api/orchestration/runs/:id': OrchRunDetail
   'GET /api/orchestration/tasks/:id': OrchTaskDetail
+  /** ?scope=fleet|workflow|session|run&id=&windowHours=&bucketMs=&middle=agent|session|model */
+  'GET /api/usage': UsageReport
+  /** ?scope=&id=&before=&limit= (≤ LIMITS.usageCallsPageMax) */
+  'GET /api/usage/calls': UsageCallsPage
 }
 
 export type ApiRoute = keyof ApiResponses
