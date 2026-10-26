@@ -27,6 +27,8 @@ export interface EnvOptions {
   terminalListJson?: string
   now?: number
   overrides?: Partial<Config>
+  /** Extra OpenCode fixture seeding (runs after seedRealisticFleet, before the store starts). */
+  seedOpenCode?: (fixture: OpenCodeFixture, now: number) => void
 }
 
 export interface Env {
@@ -83,6 +85,7 @@ export async function createEnv(opts: EnvOptions = {}): Promise<Env> {
       mkdirSync(path.join(dir, 'oc'))
       opencode = createOpenCodeFixture(path.join(dir, 'oc'), 'opencode.db')
       seedRealisticFleet(opencode, now)
+      opts.seedOpenCode?.(opencode, now)
       opencodePath = opencode.path
     }
   }

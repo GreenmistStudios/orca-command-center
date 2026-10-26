@@ -32,6 +32,8 @@ function fakeStore(): StoreReader & { calls: Record<string, unknown[]> } {
     orchestration: () => ({}) as never,
     orchestrationRun: (id) => (id === 'known' ? ({ id } as never) : null),
     orchestrationTask: (id) => (id === 'known' ? ({ id } as never) : null),
+    usage: (q) => (rec('usage', q), q.scope.id === 'nope' ? null : ({ scope: q.scope } as never)),
+    usageCalls: (q) => (rec('usageCalls', q), q.scope.id === 'nope' ? null : ({ calls: [], before: null, hasMore: false } as never)),
   }
 }
 
@@ -72,13 +74,14 @@ describe('routes', () => {
       'GET /api/sessions/:id/transcript', 'GET /api/activity', 'GET /api/parts/:id', 'GET /api/file-changes',
       'GET /api/file-changes/:id/diff', 'GET /api/artifacts', 'GET /api/attention', 'GET /api/stats', 'GET /api/orca',
       'GET /api/orchestration', 'GET /api/orchestration/runs/:id', 'GET /api/orchestration/tasks/:id',
+      'GET /api/usage', 'GET /api/usage/calls',
     ]
     expect(ROUTES.map((r) => r.key).sort()).toEqual(keys.sort())
   })
 
   it('every route returns 200 with security headers and no CORS', async () => {
     for (const r of ROUTES) {
-      const p = r.path.replace(':id', 'known')
+      const p = r.path.replace(':id', 'known') + (r.path.startsWith('/api/usage') ? '?scope=session&id=known' : '')
       const res = await fetch(base + p)
       expect(res.status, p).toBe(200)
       expect(res.headers.get('cache-control')).toBe('no-store')
@@ -109,6 +112,40 @@ describe('routes', () => {
       expect((await res.json()).code).toBe('bad_request')
     }
     expect((await (await fetch(`${base}/api/sessions?bogus=1`)).json()).error).toContain('bogus')
+  })
+
+  it('parses usage params', async () => {
+    await fetch(`${base}/api/usage?scope=workflow&id=r1&windowHours=2&bucketMs=5000&middle=model`)
+    expect(store.calls.usage!.at(-1)).toEqual({ scope: { kind: 'workflow', id: 'r1' }, windowMs: 7_200_000, bucketMs: 5000, middle: 'model' })
+    await fetch(`${base}/api/usage?scope=fleet`)
+    expect(store.calls.usage!.at(-1)).toEqual({ scope: { kind: 'fleet', id: null }, windowMs: undefined, bucketMs: undefined, middle: undefined })
+    await fetch(`${base}/api/usage/calls?scope=run&id=x&before=1:a&limit=10`)
+    expect(store.calls.usageCalls!.at(-1)).toEqual({ scope: { kind: 'run', id: 'x' }, before: '1:a', limit: 10 })
+    await fetch(`${base}/api/usage/calls?scope=session&id=x`)
+    expect(store.calls.usageCalls!.at(-1)).toMatchObject({ limit: 200 })
+  })
+
+  it('validates usage params', async () => {
+    for (const q of ['/api/usage', '/api/usage?scope=nope', '/api/usage?scope=workflow', '/api/usage?scope=fleet&bogus=1',
+      '/api/usage?scope=fleet&windowHours=0', '/api/usage?scope=fleet&windowHours=721', '/api/usage?scope=fleet&bucketMs=999',
+      '/api/usage?scope=fleet&bucketMs=86400001', '/api/usage?scope=fleet&middle=x', '/api/usage/calls?scope=session',
+      '/api/usage/calls?scope=session&id=a&limit=0', '/api/usage/calls?scope=session&id=a&limit=2001']) {
+      const res = await fetch(base + q)
+      expect(res.status, q).toBe(400)
+    }
+    expect((await fetch(`${base}/api/usage?scope=session&id=nope`)).status).toBe(404)
+    expect((await fetch(`${base}/api/usage/calls?scope=session&id=nope`)).status).toBe(404)
+  })
+
+  it('503 unavailable when the store has no usage support', async () => {
+    const { usage, usageCalls, ...bare } = fakeStore()
+    void usage
+    void usageCalls
+    const { handleApi } = await import('./routes.js')
+    const r = handleApi(bare, '/api/usage', new URLSearchParams('scope=fleet'))
+    expect(r.status).toBe(503)
+    expect(r.body).toMatchObject({ code: 'unavailable' })
+    expect(handleApi(bare, '/api/usage/calls', new URLSearchParams('scope=fleet')).status).toBe(503)
   })
 
   it('404 for unknown ids / routes, 500 without stack', async () => {

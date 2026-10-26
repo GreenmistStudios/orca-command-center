@@ -34,6 +34,15 @@ Grounding (verified on this machine, 2026-10-26):
   `completion_tokens_details`), `copilotUsage.total_nano_aiu`, `ttftMs`, `modelCallDurationMs`,
   `interTokenLatencyMs`; `session.shutdown` carries context composition (`systemTokens`,
   `toolDefinitionsTokens`, `conversationTokens`) and `totalPremiumRequests`.
+- **…but only for auxiliary calls (found during E1).** On this machine the 16 logged
+  `model_call_success` events are small `gpt-4o-mini` calls (3,272 tokens) while the
+  `session.shutdown` summaries report 6.4M input tokens and ≈ 367 AIU for the main models. The
+  authoritative Copilot numbers are the per-model `session.shutdown.modelMetrics`
+  (`usage.{inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens}`,
+  `totalNanoAiu`, `requests.cost` = premium requests), available when a session ends. Task-20b
+  turns them into **session-summary samples** (remainder after per-call samples, never double
+  counted), labelled "reported at session end"; live Copilot sessions show AIU/premium
+  requests from `session.usage_checkpoint` and a coverage note.
 - **Inflow is ~92% cache reads** (20.5M read vs 152 fresh input on the coordinator session) —
   visualizations must stay legible at extreme ratios.
 - **Cost is a list-price estimate.** Every model here is served through `github-copilot`;
@@ -279,6 +288,7 @@ Client: usage slice (ring of samples, estimates) ─ usageBus (non-React) ─▶
 | [18](tasks/Task-18.md) | Shared usage math | E1 | `src/shared/usage-math.ts` (+ test) |
 | [19](tasks/Task-19.md) | OpenCode usage extraction & streaming estimates | E1 | `src/server/sources/opencode/**`, `test/fixtures/opencode.ts` |
 | [20](tasks/Task-20.md) | Copilot usage extraction | E1 | `src/server/sources/copilot/**`, `test/fixtures/copilot.ts` |
+| [20b](tasks/Task-20b.md) | Copilot session-summary usage (added after the E1 finding) | E2 | `src/server/sources/copilot/**`, `test/fixtures/copilot.ts` |
 | [21](tasks/Task-21.md) | Animation & chart kit | E1 | `src/client/ui/flow/**`, token block in `src/client/styles/theme.css`, `package.json` deps (`d3-sankey`, `@types/d3-sankey`) |
 | [22](tasks/Task-22.md) | Client usage state, live merge, mock, view registration | E2 | `src/client/state/**`, `src/client/api/**`, `src/client/shell/{ViewTabs,CenterView}.tsx`, `src/client/hooks/useGlobalHotkeys.ts`, placeholder `src/client/views/tokens/TokensView.tsx`, `test/client/**` |
 | [23](tasks/Task-23.md) | Server usage ledger, rollups, API & SSE | E2 | `src/server/store/**`, `src/server/hub/**`, `src/server/http/routes.ts` (+ tests), `test/integration/**` |

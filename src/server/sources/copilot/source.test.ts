@@ -131,8 +131,10 @@ describe('session derivation', () => {
     expect(s.lastPrompt).toContain('Please fix the login bug')
     expect(s.facts).toEqual([
       { label: 'Copilot version', value: '1.0.40' },
+      { label: 'AI units so far', value: '0.00' },
       { label: 'Premium requests', value: '3' },
       { label: 'Model routing', value: 'claude-sonnet-5.5' },
+      { label: 'Token usage', value: 'reported when the session ends' },
     ])
   })
 

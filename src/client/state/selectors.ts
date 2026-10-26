@@ -1,7 +1,10 @@
 import {
-  AGENT_STATE_PRIORITY, type ActivityEvent, type ActivityKind, type SessionSummary, type WorkspaceRef,
+  AGENT_STATE_PRIORITY, type ActivityEvent, type ActivityKind, type SessionSummary, type SessionUsage, type UsageEstimate, type UsageScope,
+  type WorkspaceRef,
 } from '../../shared/contract'
+import { inflowOf, outflowOf } from '../../shared/usage-math'
 import type { OccState } from './store'
+import { estimateInScope } from './usage-scope'
 
 /** Selectors are pure and return referentially stable results for unchanged inputs (safe for `useOcc(sel)`). */
 
@@ -158,4 +161,94 @@ export function selectSessionAncestors(s: OccState, id: string | null): SessionS
   if (ancCache.size > 200) ancCache.clear()
   ancCache.set(id, { sessions: s.sessions, result: out })
   return out
+}
+
+/* ───────────────────────────── token flow ───────────────────────────── */
+
+const FLEET_SCOPE: UsageScope = { kind: 'fleet', id: null }
+const usageScopeCache = new Map<string, UsageScope>()
+/** Referentially stable scope object per (kind, id). */
+export function stableUsageScope(kind: UsageScope['kind'], id: string | null): UsageScope {
+  if (kind === 'fleet') return FLEET_SCOPE
+  const k = `${kind}:${id}`
+  let hit = usageScopeCache.get(k)
+  if (!hit) {
+    if (usageScopeCache.size > 200) usageScopeCache.clear()
+    usageScopeCache.set(k, (hit = { kind, id }))
+  }
+  return hit
+}
+
+/** Selected run → run; selected session → workflow of its root; else fleet. */
+export function selectAutoUsageScope(s: OccState): UsageScope {
+  const { selectedRunId, selectedSessionId, selectedRootId } = s.ui
+  if (selectedRunId) return stableUsageScope('run', selectedRunId)
+  if (selectedSessionId) {
+    const root = s.sessions[selectedSessionId]?.rootId ?? selectedRootId ?? selectedSessionId
+    return stableUsageScope('workflow', root)
+  }
+  return FLEET_SCOPE
+}
+
+export function selectSessionUsage(s: OccState, id: string | null): SessionUsage | null {
+  return (id ? s.sessions[id]?.usage : null) ?? null
+}
+
+export interface FleetBurn { costPerHour: number; tokensPerMin: number; inFlight: number }
+
+const burnMemo = memo1(
+  (stats: OccState['stats'], samples: OccState['usage']['samples'], version: number, inFlight: number): FleetBurn => {
+    void version
+    const base = stats?.usage?.rates ?? null
+    if (base) {
+      // Stats frames already count everything up to `asOf`; add live samples metered after it.
+      let cost = 0
+      let tokens = 0
+      for (let i = samples.order.length - 1; i >= 0; i--) {
+        const x = samples.byId[samples.order[i]]
+        if (!x) continue
+        if (x.ts <= base.asOf) break
+        tokens += inflowOf(x.tokens) + outflowOf(x.tokens)
+        if (typeof x.cost === 'number') cost += x.cost
+      }
+      const perMin = base.windowMs > 0 ? 60_000 / base.windowMs : 0
+      const perHour = base.windowMs > 0 ? 3_600_000 / base.windowMs : 0
+      return {
+        costPerHour: base.costPerHour + cost * perHour,
+        tokensPerMin: base.inflowPerMin + base.outflowPerMin + tokens * perMin,
+        inFlight,
+      }
+    }
+    // No stats yet: last 5 minutes of the ring, relative to the newest sample.
+    const newest = samples.byId[samples.order[samples.order.length - 1] ?? '']
+    if (!newest) return { costPerHour: 0, tokensPerMin: 0, inFlight }
+    const W = 5 * 60_000
+    let cost = 0
+    let tokens = 0
+    for (let i = samples.order.length - 1; i >= 0; i--) {
+      const x = samples.byId[samples.order[i]]
+      if (!x) continue
+      if (x.ts <= newest.ts - W) break
+      tokens += inflowOf(x.tokens) + outflowOf(x.tokens)
+      if (typeof x.cost === 'number') cost += x.cost
+    }
+    return { costPerHour: (cost * 3_600_000) / W, tokensPerMin: (tokens * 60_000) / W, inFlight }
+  },
+  (p, n) => p[0] === n[0] && p[2] === n[2] && p[3] === n[3],
+)
+
+/** Fleet burn: `stats.usage.rates` refined with live samples newer than the stats frame; `inFlight` = streaming calls. */
+export function selectFleetBurn(s: OccState): FleetBurn {
+  return burnMemo(s.stats, s.usage.samples, s.usage.samples.version, Object.keys(s.usage.estimates).length)
+}
+
+const inFlightMemo = memo1(
+  (estimates: OccState['usage']['estimates'], scope: UsageScope, sessions: OccState['sessions'], orch: OccState['orchestration']): UsageEstimate[] =>
+    Object.values(estimates).filter((e) => estimateInScope(e, scope, { sessions, orchestration: orch })),
+  (p, n) => p[0] === n[0] && p[1].kind === n[1].kind && p[1].id === n[1].id && p[2] === n[2] && p[3] === n[3],
+)
+
+/** In-flight estimates inside `scope` (stable while estimates/sessions are unchanged). */
+export function selectInFlight(s: OccState, scope: UsageScope): UsageEstimate[] {
+  return inFlightMemo(s.usage.estimates, scope, s.sessions, s.orchestration)
 }

@@ -146,3 +146,36 @@ describe('hub', () => {
     expect(d.ended).toBe(true)
   })
 })
+
+describe('hub usage coalescing', () => {
+  const sample = (id: string, ledgerSeq: number, cost = 0) => ({ id, ledgerSeq, cost }) as never
+  const est = (sessionId: string, updatedAt: number, inFlight: boolean) => ({ sessionId, updatedAt, inFlight }) as never
+
+  it('merges samples by id (highest ledgerSeq) and estimates by session (latest updatedAt, end wins)', () => {
+    const hub = createHub({ meta: () => meta })
+    const c = client()
+    hub.subscribe(null, c)
+    hub.publish({ type: 'usage', samples: [sample('a', 2, 5), sample('b', 1)], estimates: [est('s1', 10, true), est('s2', 10, true)] })
+    hub.publish({ type: 'usage', samples: [sample('a', 1, 1), sample('c', 3)], estimates: [est('s1', 20, false), est('s2', 5, false)] })
+    hub.publish({ type: 'usage', samples: [], estimates: [est('s1', 15, true)] })
+    vi.advanceTimersByTime(250)
+    const frames = events(c).filter((e) => e.type === 'usage') as Array<Extract<StreamEvent, { type: 'usage' }>>
+    expect(frames).toHaveLength(1)
+    const f = frames[0]!
+    expect(f.samples.map((s) => s.id).sort()).toEqual(['a', 'b', 'c'])
+    expect(f.samples.find((s) => s.id === 'a')).toMatchObject({ ledgerSeq: 2, cost: 5 })
+    expect(f.estimates.find((e) => e.sessionId === 's1')).toMatchObject({ updatedAt: 20, inFlight: false })
+    expect(f.estimates.find((e) => e.sessionId === 's2')).toMatchObject({ updatedAt: 10, inFlight: true })
+  })
+
+  it('an end estimate wins an updatedAt tie', () => {
+    const hub = createHub({ meta: () => meta })
+    const c = client()
+    hub.subscribe(null, c)
+    hub.publish({ type: 'usage', samples: [], estimates: [est('s', 10, true)] })
+    hub.publish({ type: 'usage', samples: [], estimates: [est('s', 10, false)] })
+    vi.advanceTimersByTime(250)
+    const f = events(c).find((e) => e.type === 'usage') as Extract<StreamEvent, { type: 'usage' }>
+    expect(f.estimates[0]!.inFlight).toBe(false)
+  })
+})

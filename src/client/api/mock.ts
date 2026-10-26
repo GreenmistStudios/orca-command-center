@@ -6,8 +6,9 @@
 import {
   LIMITS, type ActivityEvent, type ActivityPage, type ApiResponses, type ApiRoute, type BootstrapPayload, type FleetStats,
   type SessionDetail, type SessionSummary, type SessionTree, type StreamEvent, type TranscriptMessage, type TranscriptPage,
-  type PartDetail, type ActivityKind, type StreamPayload,
+  type PartDetail, type ActivityKind, type StreamPayload, type UsageEstimate, type UsageOutput, type UsageSample, type UsageScopeKind,
 } from '../../shared/contract'
+import { appendSample, buildUsageCalls, buildUsageReport, fleetUsage, genCall, makeSample, type CallShape } from './mock-usage'
 import {
   artifactsOf, buildMockWorld, fileChangesOf, metaOf, MOCK_IDS, mulberry32, orchestrationSummary, recomputeAll, recomputeSession,
   toolInfo, type MockWorld,
@@ -28,6 +29,11 @@ export interface MockBackend {
   tickSlow(): void
   /** Emit a stats frame (~5 s). */
   tickStats(): void
+  /**
+   * Live token flow (~0.4 s): grow in-flight estimates; a call finishes every 1.5–4 s per working
+   * session (metered sample + updated summaries) and the next one starts. `now` is injectable for tests.
+   */
+  tickUsage(now?: number): void
   readonly world: MockWorld
 }
 
@@ -55,6 +61,8 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
   const scenario = opts.scenario ?? 'healthy'
   const world = buildMockWorld({ now: base, seed: opts.seed, scenario })
   const rnd = mulberry32((opts.seed ?? 7) + 101)
+  const usageRnd = mulberry32((opts.seed ?? 7) + 909)
+  world.nowFn = clock
   const bootId = `mock-boot-${(opts.seed ?? 7).toString(16)}`
   const listeners = new Set<(e: StreamEvent) => void>()
   let seq = 1000
@@ -108,7 +116,7 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
       windowMs: 24 * 3_600_000, computedAt: t,
       sessions: { total: ss.length, roots: ss.filter((s) => s.depth === 0).length, live: ss.filter((s) => s.live).length, working: ss.filter((s) => s.state === 'working').length, blocked: ss.filter((s) => s.state === 'blocked').length, waiting: ss.filter((s) => s.state === 'waiting').length, error: ss.filter((s) => s.state === 'error').length },
       activity: { toolCalls: toolEvs.length, toolErrors: toolEvs.filter((e) => e.status === 'error').length, mcpCalls: evs.filter((e) => e.kind === 'mcp').length, thinking: evs.filter((e) => e.kind === 'thinking').length, fileChanges: evs.filter((e) => e.kind === 'file-change').length, filesTouched: new Set(evs.flatMap((e) => e.files)).size, subagents: ss.filter((s) => s.depth > 0).length },
-      tokens, cost: Math.round(cost * 100) / 100,
+      tokens, cost: Math.round(cost * 100) / 100, usage: fleetUsage(world, t),
       byHarness: [...by((s) => s.harness)].map(([harness, v]) => ({ harness, sessions: v.sessions, live: v.live, cost: Math.round(v.cost * 100) / 100 })),
       byModel: [...by((s) => s.model?.modelId ?? null)].map(([model, v]) => ({ model, sessions: v.sessions, cost: Math.round(v.cost * 100) / 100, tokens: v.tokens })),
       byAgent: [...by((s) => s.agent)].map(([agent, v]) => ({ agent, sessions: v.sessions, cost: Math.round(v.cost * 100) / 100 })),
@@ -195,6 +203,25 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     }
   }
 
+  function usageScope(kind: unknown, id: unknown): { kind: UsageScopeKind; id: string | null } {
+    if (kind !== 'fleet' && kind !== 'workflow' && kind !== 'session' && kind !== 'run') throw new ApiRequestError(400, 'bad_request', 'scope must be fleet|workflow|session|run')
+    if (kind !== 'fleet' && (id == null || id === '')) throw new ApiRequestError(400, 'bad_request', `id is required for scope ${kind}`)
+    return { kind, id: kind === 'fleet' ? null : String(id) }
+  }
+
+  /** What a workflow/session's tokens produced, from the mock's file changes and artifacts. */
+  function outputOf(scope: { kind: UsageScopeKind; id: string | null }): UsageOutput | null {
+    if (scope.kind !== 'workflow' && scope.kind !== 'session') return null
+    const mine = (x: { sessionId: string; rootId: string }) => (scope.kind === 'workflow' ? x.rootId === scope.id : x.sessionId === scope.id)
+    const changes = fileChangesOf(world).filter(mine)
+    const arts = artifactsOf(world).filter(mine)
+    return {
+      fileChanges: changes.length, filesTouched: new Set(changes.map((c) => c.path)).size,
+      additions: changes.reduce((n, c) => n + (c.additions ?? 0), 0), deletions: changes.reduce((n, c) => n + (c.deletions ?? 0), 0),
+      artifacts: arts.length, pullRequests: arts.filter((a) => a.kind === 'pull-request').length,
+    }
+  }
+
   /* ───────── REST ───────── */
   const routes: Record<string, (o: GetOptions) => unknown> = {
     'GET /api/meta': () => meta(),
@@ -247,6 +274,26 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     'GET /api/orchestration/runs/:id': (o) => {
       const r = world.runs.find((x) => x.run.id === o.path!.id)
       if (!r) throw new ApiRequestError(404, 'not_found', `run ${o.path!.id} not found`)
+      return r
+    },
+    'GET /api/usage': (o) => {
+      const p = o.params ?? {}
+      const scope = usageScope(p.scope, p.id)
+      const hours = p.windowHours != null && p.windowHours !== '' ? Number(p.windowHours) : undefined
+      if (hours != null && !(hours >= 1 && hours <= 720)) throw new ApiRequestError(400, 'bad_request', 'windowHours must be 1–720')
+      if (p.bucketMs != null && !(Number(p.bucketMs) >= 1000)) throw new ApiRequestError(400, 'bad_request', 'bucketMs must be ≥ 1000')
+      const middle = p.middle as 'agent' | 'session' | 'model' | undefined
+      if (middle && !['agent', 'session', 'model'].includes(middle)) throw new ApiRequestError(400, 'bad_request', 'invalid middle')
+      const r = buildUsageReport(world, scope, { windowHours: hours, bucketMs: p.bucketMs != null ? Number(p.bucketMs) : undefined, middle, output: outputOf(scope) }, nowMs())
+      if (!r) throw new ApiRequestError(404, 'not_found', `${scope.kind} ${scope.id} not found`)
+      return r
+    },
+    'GET /api/usage/calls': (o) => {
+      const p = o.params ?? {}
+      const scope = usageScope(p.scope, p.id)
+      const limit = Math.min(Number(p.limit ?? 200), LIMITS.usageCallsPageMax)
+      const r = buildUsageCalls(world, scope, p.before as string | undefined, limit)
+      if (!r) throw new ApiRequestError(404, 'not_found', `${scope.kind} ${scope.id} not found`)
       return r
     },
     'GET /api/orchestration/tasks/:id': (o) => {
@@ -376,11 +423,85 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
 
   const tickStats = () => emit({ type: 'stats', stats: stats() })
 
+  /* ───────── live token flow ───────── */
+  interface LiveCall { shape: CallShape; startedAt: number; finishAt: number; n: number; est: UsageEstimate }
+  const liveCalls = new Map<string, LiveCall>()
+  /** Sessions that start their next call later (after a short pause). */
+  const resumeAt = new Map<string, number>()
+  const callN = new Map<string, number>()
+  const isStreaming = (s: SessionSummary) => s.live && s.state === 'working'
+
+  function startCall(s: SessionSummary, t: number): LiveCall {
+    const list = world.usageBySession.get(s.id) ?? []
+    const last = list[list.length - 1]
+    const context = (last ? last.tokens.input + last.tokens.cacheRead + last.tokens.cacheWrite : 12_000) + 600 + usageRnd() * 1200
+    const shape = genCall(usageRnd, s, context, true)
+    const dur = 1500 + usageRnd() * 2500
+    const n = (callN.get(s.id) ?? list.length) + 1
+    callN.set(s.id, n)
+    const est: UsageEstimate = { sessionId: s.id, rootId: s.rootId, harness: s.harness, startedAt: t, updatedAt: t, estOutputTokens: 0, inFlight: true }
+    const call = { shape, startedAt: t, finishAt: t + dur, n, est }
+    liveCalls.set(s.id, call)
+    world.estimates.set(s.id, est)
+    return call
+  }
+
+  function tickUsage(now = nowMs()) {
+    const estimates: UsageEstimate[] = []
+    const samples: UsageSample[] = []
+    const touched = new Set<string>()
+    for (const s of sessionList()) {
+      const call = liveCalls.get(s.id)
+      if (!isStreaming(s)) {
+        if (call) {
+          liveCalls.delete(s.id); world.estimates.delete(s.id)
+          estimates.push({ ...call.est, updatedAt: now, inFlight: false }); touched.add(s.id)
+        }
+        resumeAt.delete(s.id)
+        continue
+      }
+      if (!call) {
+        const at = resumeAt.get(s.id)
+        if (at != null && now < at) continue
+        resumeAt.delete(s.id)
+        estimates.push({ ...startCall(s, now).est }); touched.add(s.id)
+        continue
+      }
+      if (now >= call.finishAt) {
+        const sample = appendSample(world, makeSample(world, s, call.n, now, { ...call.shape, durationMs: Math.round(now - call.startedAt) }, 'tool-calls'))
+        samples.push(sample); touched.add(s.id)
+        liveCalls.delete(s.id); world.estimates.delete(s.id)
+        if (usageRnd() < 0.15) { resumeAt.set(s.id, now + 1000 + usageRnd() * 1000); estimates.push({ ...call.est, updatedAt: now, inFlight: false }) }
+        else estimates.push({ ...startCall(s, now).est })
+        continue
+      }
+      // Grow toward the call's planned output (≈ streamed chars / 4).
+      const frac = Math.min(1, (now - call.startedAt) / (call.finishAt - call.startedAt))
+      call.est = { ...call.est, updatedAt: now, estOutputTokens: Math.round(call.shape.tokens.output * frac * (0.9 + usageRnd() * 0.1)) }
+      world.estimates.set(s.id, call.est)
+      estimates.push(call.est)
+    }
+    if (!samples.length && !estimates.length) return
+    const changed: SessionSummary[] = []
+    for (const id of touched) {
+      const s = world.sessions.get(id)!
+      recomputeSession(world, id)
+      changed.push(s)
+      if (s.rootId !== id && !touched.has(s.rootId)) { recomputeSession(world, s.rootId); changed.push(world.sessions.get(s.rootId)!) }
+    }
+    emit({ type: 'usage', samples, estimates })
+    if (changed.length) emit({ type: 'sessions', sessions: [...new Set(changed)], removed: [] })
+  }
+
+  // Calls already streaming when the mock starts.
+  for (const s of sessionList()) if (isStreaming(s)) startCall(s, nowMs() - Math.round(usageRnd() * 1200))
+  recomputeAll(world)
+
   function connect(onEvent: (e: StreamEvent) => void): () => void {
     listeners.add(onEvent)
     queueMicrotask(() => onEvent({ type: 'hello', seq, bootId, meta: meta() }))
     if (opts.live !== false && timers.length === 0) {
-      timers = [setInterval(tick, 800), setInterval(tickSlow, 6000), setInterval(tickStats, 5000)]
+      timers = [setInterval(tick, 800), setInterval(tickSlow, 6000), setInterval(tickStats, 5000), setInterval(() => tickUsage(), 400)]
     }
     return () => {
       listeners.delete(onEvent)
@@ -388,5 +509,5 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     }
   }
 
-  return { get, connect, bootstrap, tick, tickSlow, tickStats, world }
+  return { get, connect, bootstrap, tick, tickSlow, tickStats, tickUsage, world }
 }

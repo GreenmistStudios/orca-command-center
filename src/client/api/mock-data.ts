@@ -6,8 +6,9 @@ import type {
   ActivityEvent, ActivityKind, ActivityStatus, AgentState, Artifact, AttentionItem, FileChange, FileDiff,
   Harness, HookEntry, OrchDispatch, OrchGate, OrchMessage, OrchRun, OrchRunDetail, OrchTask,
   OrcaSnapshot, ServerMeta, SessionSummary, SourceHealth, StateSource, TerminalInfo, TodoItem,
-  ToolCategory, ToolCallInfo, TokenUsage, WorkspaceRef, WorktreeInfo, OrchestrationSummary,
+  ToolCategory, ToolCallInfo, TokenUsage, WorkspaceRef, WorktreeInfo, OrchestrationSummary, UsageEstimate, UsageSample,
 } from '../../shared/contract'
+import { seedUsage, sessionTokensCost, sessionUsageOf } from './mock-usage'
 
 const MIN = 60_000
 
@@ -37,6 +38,14 @@ export interface MockWorld {
   attention: AttentionItem[]
   sources: SourceHealth[]
   workspaces: Record<string, WorkspaceRef>
+  /** Token-flow ledger: every metered call (ascending ledgerSeq) and its per-session index. */
+  usage: UsageSample[]
+  usageBySession: Map<string, UsageSample[]>
+  /** In-flight estimates keyed by sessionId. */
+  estimates: Map<string, UsageEstimate>
+  ledgerSeq: number
+  /** Clock used for live rates (defaults to `now`). */
+  nowFn?: () => number
 }
 
 export const MOCK_IDS = {
@@ -157,6 +166,7 @@ export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'h
   const world: MockWorld = {
     now, sessions: new Map(), events: [], messages: new Map(), details: new Map(), diffs: new Map(), todos: new Map(),
     orca: null as unknown as OrcaSnapshot, runs: [], attention: [], sources: [], workspaces,
+    usage: [], usageBySession: new Map(), estimates: new Map(), ledgerSeq: 0,
   }
 
   /* ───────── sessions ───────── */
@@ -450,6 +460,9 @@ export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'h
     s.say('Added `.github/workflows/pr-template.yml`; it fails when the Summary section is empty.')
   }
 
+  /* ───────── token-flow ledger (own rng: existing mock data stays unchanged) ───────── */
+  seedUsage(world, mulberry32((opts.seed ?? 7) + 555))
+
   /* ───────── derive session aggregates ───────── */
   recomputeAll(world)
 
@@ -603,14 +616,11 @@ export function recomputeSession(world: MockWorld, id: string) {
   const s = world.sessions.get(id)
   if (!s) return
   const evs = world.events.filter((e) => e.sessionId === id)
-  const tokens: TokenUsage = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
-  let cost = 0
   const files = new Set<string>()
   const msgs = new Set<string>()
   let tools = 0, toolErrors = 0, mcp = 0, fileChanges = 0, steps = 0, thinking = 0
   for (const e of evs) {
     if (e.messageId) msgs.add(e.messageId)
-    if (e.usage) { cost += e.usage.cost; for (const k of Object.keys(tokens) as Array<keyof TokenUsage>) tokens[k] += e.usage.tokens[k] }
     if (e.kind === 'step') steps++
     if (e.kind === 'thinking') thinking++
     if (e.kind === 'mcp') mcp++
@@ -618,8 +628,11 @@ export function recomputeSession(world: MockWorld, id: string) {
     if (e.tool && e.kind !== 'subagent') { tools++; if (e.status === 'error') toolErrors++ }
     e.files.forEach((f) => files.add(f))
   }
-  s.tokens = tokens
-  s.cost = Math.round(cost * 100) / 100
+  // Token-flow: summary tokens/cost are exactly Σ of the session's metered samples.
+  const tc = sessionTokensCost(world, id)
+  s.tokens = tc.tokens
+  s.cost = tc.cost
+  s.usage = sessionUsageOf(world, s, world.nowFn?.() ?? world.now)
   s.counters = { messages: msgs.size, steps, thinking, tools, toolErrors, mcpCalls: mcp, fileChanges, filesTouched: files.size, subagents: s.childIds.length }
 }
 

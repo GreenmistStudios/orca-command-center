@@ -13,6 +13,7 @@ import {
   type ToolCallInfo,
   type TranscriptMessage,
   type UsageEstimate,
+  type TokenUsage,
   type UsageSample,
 } from '../../../shared/contract.js'
 import type { HarnessSession } from '../../types.js'
@@ -70,6 +71,15 @@ function countPatch(patch: string): { add: number; del: number } {
   return { add, del }
 }
 
+const zero = (): TokenUsage => ({ input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 })
+function addTo(a: TokenUsage, b: TokenUsage): void {
+  a.input += b.input
+  a.output += b.output
+  a.reasoning += b.reasoning
+  a.cacheRead += b.cacheRead
+  a.cacheWrite += b.cacheWrite
+}
+
 export class SessionModel {
   readonly events = new Map<string, ActivityEvent>()
   readonly details = new Map<string, PartDetail>()
@@ -107,6 +117,16 @@ export class SessionModel {
   private readonly callStarts = new Map<string, number>()
   private inFlightSince: number | null = null
   private usageOut: { samples: UsageSample[]; estimates: UsageEstimate[] } = { samples: [], estimates: [] }
+  /** Multiple-shutdown rule (resumed sessions). Real data on this machine has one multi-shutdown
+   *  session and its metrics are all zero, so it cannot discriminate; Copilot's shutdown reports the
+   *  process run, so the default is 'per-run' (additive). 'cumulative' subtracts what earlier
+   *  shutdowns already reported. */
+  shutdownMode: 'per-run' | 'cumulative' = 'per-run'
+  private periodStart: number | null = null
+  private periodCalls = new Map<string, { t: TokenUsage; aiu: number }>()
+  private prevTotals = new Map<string, { t: TokenUsage; aiu: number }>()
+  private shutdowns = 0
+  private checkpointAiu: number | null = null
   private shutdownFacts: Array<{ label: string; value: string }> = []
   private readonly pending = new Map<string, { ts: number; label: string }>()
   private readonly running = new Map<string, number>()
@@ -195,9 +215,78 @@ export class SessionModel {
     }
     if (modelId) this.lastModel = this.lastModel ?? modelId
     this.samples.set(sample.id, sample)
+    if (modelId) {
+      const acc = this.periodCalls.get(modelId) ?? { t: zero(), aiu: 0 }
+      addTo(acc.t, sample.tokens)
+      acc.aiu += sample.aiu ?? 0
+      this.periodCalls.set(modelId, acc)
+    }
     this.usageOut.samples.push(sample)
     this.estimate(false, this.inFlightSince ?? sample.startTs ?? ts, ts)
     this.inFlightSince = null
+  }
+
+  /** Per-model remainder samples: shutdown totals minus per-call samples already counted. */
+  private shutdownSummary(d: Obj, ts: number, eid: string): void {
+    const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+    const start = this.periodStart ?? this.firstTs
+    this.periodStart = ts
+    this.shutdowns++
+    const mm = isObj(d.modelMetrics) ? d.modelMetrics : null
+    const nextPrev = new Map(this.prevTotals)
+    if (mm) {
+      for (const [modelId, raw] of Object.entries(mm)) {
+        if (!isObj(raw)) continue
+        const u = isObj(raw.usage) ? raw.usage : {}
+        const td = isObj(raw.tokenDetails) ? raw.tokenDetails : {}
+        const cacheRead = Math.max(0, num(u.cacheReadTokens) ?? 0)
+        const cacheWrite = Math.max(0, num(u.cacheWriteTokens) ?? 0)
+        const reasoning = Math.max(0, num(u.reasoningTokens) ?? 0)
+        const fresh = isObj(td.input) ? num(td.input.tokenCount) : null
+        const total: TokenUsage = {
+          input: fresh !== null ? Math.max(0, fresh) : Math.max(0, (num(u.inputTokens) ?? 0) - cacheRead - cacheWrite),
+          output: Math.max(0, (num(u.outputTokens) ?? 0) - reasoning),
+          reasoning,
+          cacheRead,
+          cacheWrite,
+        }
+        const aiu = Math.max(0, num(raw.totalNanoAiu) ?? 0) / 1e9
+        nextPrev.set(modelId, { t: { ...total }, aiu })
+        const prev = this.shutdownMode === 'cumulative' ? this.prevTotals.get(modelId) : undefined
+        const calls = this.periodCalls.get(modelId)
+        const t: TokenUsage = {
+          input: Math.max(0, total.input - (prev?.t.input ?? 0) - (calls?.t.input ?? 0)),
+          output: Math.max(0, total.output - (prev?.t.output ?? 0) - (calls?.t.output ?? 0)),
+          reasoning: Math.max(0, total.reasoning - (prev?.t.reasoning ?? 0) - (calls?.t.reasoning ?? 0)),
+          cacheRead: Math.max(0, total.cacheRead - (prev?.t.cacheRead ?? 0) - (calls?.t.cacheRead ?? 0)),
+          cacheWrite: Math.max(0, total.cacheWrite - (prev?.t.cacheWrite ?? 0) - (calls?.t.cacheWrite ?? 0)),
+        }
+        const rest = Math.max(0, aiu - (prev?.aiu ?? 0) - (calls?.aiu ?? 0))
+        if (t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite === 0 && rest < 1e-12) continue
+        const sample: UsageSample = {
+          id: `copilot:${this.id}:summary:${eid}:${modelId}`,
+          harness: 'copilot',
+          sessionId: this.id,
+          rootId: null,
+          ledgerSeq: 0,
+          ts,
+          startTs: start || null,
+          model: { providerId: 'github-copilot', modelId },
+          agent: 'copilot',
+          tokens: t,
+          cost: null,
+          aiu: rest,
+          ttftMs: null,
+          durationMs: null,
+          finish: 'session-summary',
+          source: 'copilot.session-summary',
+        }
+        this.samples.set(sample.id, sample)
+        this.usageOut.samples.push(sample)
+      }
+    }
+    this.prevTotals = nextPrev
+    this.periodCalls = new Map()
   }
 
   private shutdownInfo(d: Obj): void {
@@ -329,6 +418,7 @@ export class SessionModel {
         return this.permCompleted(d, ts)
       case 'session.usage_checkpoint': {
         const n = d.totalPremiumRequests
+        if (typeof d.totalNanoAiu === 'number' && Number.isFinite(d.totalNanoAiu)) this.checkpointAiu = d.totalNanoAiu / 1e9
         if (typeof n === 'number' || typeof n === 'string') this.premium = String(n)
         return
       }
@@ -341,6 +431,7 @@ export class SessionModel {
         return this.callSuccess(d, ts, eid)
       case 'session.shutdown':
         this.shutdownInfo(d)
+        this.shutdownSummary(d, ts, eid)
         this.endInFlight(ts)
         this.stopSeq = this.seq
         this.pending.clear()
@@ -675,9 +766,11 @@ export class SessionModel {
     const modelId = this.lastModel ?? this.startModel
     const facts: Array<{ label: string; value: string }> = []
     if (this.version) facts.push({ label: 'Copilot version', value: this.version })
+    if (this.shutdowns === 0 && this.checkpointAiu !== null) facts.push({ label: 'AI units so far', value: this.checkpointAiu.toFixed(2) })
     if (this.premium) facts.push({ label: 'Premium requests', value: this.premium })
     if (this.routed) facts.push({ label: 'Model routing', value: this.routed })
     facts.push(...this.shutdownFacts)
+    if (this.shutdowns === 0) facts.push({ label: 'Token usage', value: 'reported when the session ends' })
     const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
     for (const u of this.samples.values()) {
       tokens.input += u.tokens.input

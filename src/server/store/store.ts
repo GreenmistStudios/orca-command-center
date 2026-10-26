@@ -29,6 +29,7 @@ import type {
   SourceHealth,
   TerminalInfo,
   ToolStat,
+  UsageOutput,
   TranscriptPage,
   WorktreeInfo,
 } from '../../shared/contract.js'
@@ -53,6 +54,7 @@ import { compareEvents, cursorOf, Ring } from './ring.js'
 import { allHealth, buildSources, type SourceSet } from './sources.js'
 import { deriveState, isLive } from './state.js'
 import { computeStats } from './stats.js'
+import { UsageService } from './usage-service.js'
 
 const CLOCK_TICK_MS = 15_000
 const COUNTER_MIN_INTERVAL_MS = 5_000
@@ -126,6 +128,57 @@ export const createStore: CreateStore = (deps): Store => {
   const toolStatsCache = new Map<string, { at: number; value: ToolStat[] }>()
   const artifactCache = new Map<string, { at: number; value: Artifact[] }>()
 
+  /* ───────────────────────────── token-flow usage ───────────────────────────── */
+  const usage: UsageService = new UsageService({
+    log,
+    now,
+    windowMs: config.windowMs,
+    harnesses: sources.harnesses,
+    sessionOf: (id) => sessions.get(id) ?? null,
+    findSession: (id) => findSession(id),
+    rootOf: (id) => rootOf(id),
+    loadTree: (id) => void loadTree(id),
+    treeIds: (id) => descendantsKnown(id),
+    windowSessionIds: (w) => {
+      const since = now() - w
+      const out: string[] = []
+      for (const hs of sessions.values()) if (hs.updatedAt >= since) out.push(hs.id)
+      return out
+    },
+    isLive: (id) => summaries.get(id)?.live === true,
+    isProtected: (id) => (sessions.get(id)?.updatedAt ?? 0) >= now() - config.windowMs,
+    titleOf: (id) => sessions.get(id)?.title ?? '',
+    runSessionIds: (runId) => {
+      const d = runDetails.get(runId) ?? sources.orch?.getRun(runId) ?? null
+      if (!d) return null
+      const out = new Set<string>()
+      const c = sessionLinkOfHandle(d.run.coordinatorHandle)
+      if (c) out.add(c)
+      for (const x of d.dispatches) {
+        const a = sessionLinkOfHandle(x.assigneeHandle)
+        if (a) out.add(a)
+      }
+      return [...out]
+    },
+    outputOf: (kind, id): UsageOutput => {
+      const changes = kind === 'workflow' ? fileChanges({ rootId: id }) : fileChanges({ sessionId: id })
+      const arts = kind === 'workflow' ? artifacts({ rootId: id }) : artifactsFor(`session:${id}`, () => scopedArtifacts([id]))
+      return {
+        fileChanges: changes.length,
+        filesTouched: new Set(changes.map((c) => c.path)).size,
+        additions: changes.reduce((n, c) => n + (c.additions ?? 0), 0),
+        deletions: changes.reduce((n, c) => n + (c.deletions ?? 0), 0),
+        artifacts: arts.length,
+        pullRequests: arts.filter((a) => a.kind === 'pull-request').length,
+      }
+    },
+    publishUsage: (samples, estimates) => pub.publish({ type: 'usage', samples, estimates }),
+    refreshSessions: (ids) => publishSessions(rebuild(ids)),
+    markStatsDirty: () => {
+      statsDirty = true
+    },
+  })
+
   /* ───────────────────────────── session graph ───────────────────────────── */
 
   function srcOf(id: string): HarnessSource | null {
@@ -136,6 +189,7 @@ export const createStore: CreateStore = (deps): Store => {
   function ingestSession(hs: HarnessSession, extra = false): void {
     const prev = sessions.get(hs.id)
     if (prev && prev.parentId !== hs.parentId && prev.parentId) children.get(prev.parentId)?.delete(hs.id)
+    if (!prev || prev.parentId !== hs.parentId) usage.invalidateRoots()
     sessions.set(hs.id, hs)
     if (extra && !prev) extras.add(hs.id)
     if (!extra) extras.delete(hs.id)
@@ -335,6 +389,9 @@ export const createStore: CreateStore = (deps): Store => {
       .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))
       .map((c) => c.id)
 
+    const live = isLive(d.state, hs.lastActivityAt, hs.updatedAt, t, th)
+    const usageRollup = usage.usageOf(id, live, rootId === id)
+
     return {
       id,
       harness: hs.harness,
@@ -353,7 +410,7 @@ export const createStore: CreateStore = (deps): Store => {
       state: d.state,
       stateSource: d.stateSource,
       stateSince,
-      live: isLive(d.state, hs.lastActivityAt, hs.updatedAt, t, th),
+      live,
       current: hs.current,
       lastPrompt: hs.lastPrompt,
       lastMessage: hs.lastMessage,
@@ -365,12 +422,13 @@ export const createStore: CreateStore = (deps): Store => {
       spawn: hs.spawn,
       orca,
       facts: hs.facts,
+      ...(usageRollup ? { usage: usageRollup } : {}),
     }
   }
 
   const sameJson = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b)
   /** Cheap field-wise comparison: primitives/identity first, JSON only for differing object refs. */
-  function summaryEqual(a: SessionSummary, b: SessionSummary): boolean {
+  function summaryEqual(a: SessionSummary, b: SessionSummary, withRates = false): boolean {
     const x = a as unknown as Record<string, unknown>
     const y = b as unknown as Record<string, unknown>
     for (const k in y) {
@@ -378,7 +436,12 @@ export const createStore: CreateStore = (deps): Store => {
       const v = y[k]
       if (u === v) continue
       if (typeof u !== 'object' || typeof v !== 'object' || !u || !v) return false
-      if (k === 'childIds') {
+      if (k === 'usage') {
+        // rates decay continuously and estimates re-stamp on every poll: only the clock tick compares them
+        const skip = withRates ? ['asOf'] : ['asOf', 'rates', 'updatedAt']
+        const norm = (o: unknown) => JSON.stringify(o, (key, val) => (skip.includes(key) ? undefined : val))
+        if (norm(u) !== norm(v)) return false
+      } else if (k === 'childIds') {
         const ua = u as string[]
         const va = v as string[]
         if (ua.length !== va.length || ua.some((c, i) => c !== va[i])) return false
@@ -389,7 +452,7 @@ export const createStore: CreateStore = (deps): Store => {
   }
 
   /** Rebuild summaries; returns the ones whose JSON changed. */
-  function rebuild(ids: Iterable<string>, force = false): SessionSummary[] {
+  function rebuild(ids: Iterable<string>, force = false, withRates = false): SessionSummary[] {
     const t = now()
     const linkCache = new Map<string, ReturnType<JoinIndex['linkRoot']>>()
     const sizeMemo = new Map<string, number>()
@@ -398,7 +461,7 @@ export const createStore: CreateStore = (deps): Store => {
       const s = buildSummary(id, t, linkCache, sizeMemo)
       if (!s) continue
       const old = summaries.get(id)
-      if (!force && old && summaryEqual(old, s)) continue
+      if (!force && old && summaryEqual(old, s, withRates)) continue
       summaries.set(id, s)
       changed.push(s)
     }
@@ -659,14 +722,17 @@ export const createStore: CreateStore = (deps): Store => {
   function stats(windowMs?: number): FleetStats {
     const w = windowMs ?? config.windowMs
     const t = now()
-    return computeStats(windowSessions(w), (id) => counterCache.get(id)?.value ?? null, toolStatsFor(w), ring.all(), w, t)
+    const st = computeStats(windowSessions(w), (id) => counterCache.get(id)?.value ?? null, toolStatsFor(w), ring.all(), w, t)
+    const u = usage.fleetUsage(w)
+    if (u) st.usage = u
+    return st
   }
 
   function publishStatsIfChanged(): void {
     if (!statsDirty || !pub.ready) return
     statsDirty = false
     const s = stats()
-    if (statsGate.changed(s, ['computedAt'])) pub.publish({ type: 'stats', stats: s })
+    if (statsGate.changed(s, ['computedAt', 'asOf'])) pub.publish({ type: 'stats', stats: s })
   }
 
   /* ───────────────────────────── artifacts ───────────────────────────── */
@@ -751,6 +817,7 @@ export const createStore: CreateStore = (deps): Store => {
             for (const a of ancestorIds(hs.id)) touched.add(a)
             if (!counterCache.has(hs.id)) noteActivity(hs.id)
           }
+          if (started) usage.enqueue(touched)
           publishSessions(rebuild(touched))
           scheduleDerived()
           break
@@ -784,6 +851,10 @@ export const createStore: CreateStore = (deps): Store => {
           publishSessions(s)
           break
         }
+        case 'usage': {
+          usage.ingestLive(u.samples, u.estimates)
+          break
+        }
         case 'reset': {
           log.info('store: %s reset (%s) — reseeding', src.id, u.reason)
           reseed(src)
@@ -805,6 +876,7 @@ export const createStore: CreateStore = (deps): Store => {
       counterCache.delete(id)
       extras.delete(id)
       gone.push(id)
+      usage.removeSessions([id])
     }
     childrenLoaded.clear()
     unknownIds.clear()
@@ -819,6 +891,7 @@ export const createStore: CreateStore = (deps): Store => {
     pub.publish({ type: 'meta', meta: meta() })
     scheduleDerived()
     backgroundCounters(changed.filter((s) => s.harness === src.harness).map((s) => s.id))
+    usage.enqueue([...sessions.values()].filter((hs) => hs.harness === src.harness).map((hs) => hs.id))
   }
 
   function onCli(u: OrcaCliUpdate): void {
@@ -902,7 +975,8 @@ export const createStore: CreateStore = (deps): Store => {
           summaries.delete(id)
         }
       }
-      const changed = rebuild(sessions.keys())
+      usage.tick()
+      const changed = rebuild(sessions.keys(), false, true)
       publishSessions(changed, removed)
       recomputeAttention()
       statsDirty = true
@@ -934,9 +1008,16 @@ export const createStore: CreateStore = (deps): Store => {
       port: config.port,
       readOnly: true,
       windowMs: config.windowMs,
-      sources: allHealth(sources),
+      sources: allHealth(sources).map(withLedgerDetail),
       orca: orcaStatus(),
     }
+  }
+
+  function withLedgerDetail(h: SourceHealth): SourceHealth {
+    const ls = usage.stats()
+    if (ls.evictedSessions === 0 || (h.id !== 'opencode' && h.id !== 'copilot')) return h
+    const note = `usage ledger evicted ${ls.evictedSessions} sessions (${ls.evictedSamples} samples)`
+    return { ...h, detail: h.detail ? `${h.detail}; ${note}` : note }
   }
 
   function bootstrap(): BootstrapPayload {
@@ -1210,10 +1291,18 @@ export const createStore: CreateStore = (deps): Store => {
     backgroundCounters(all.filter((s) => !s.live).map((s) => s.id))
     started = true
     recomputeAttention()
-    statsGate.changed(stats(), ['computedAt'])
+    statsGate.changed(stats(), ['computedAt', 'asOf'])
     orchGate.changed(orchestrationSummary())
     healthGate.changed(healthDigest())
     pub.ready = true
+    {
+      const wins = [...sessions.values()].filter((hs) => hs.updatedAt >= now() - config.windowMs).sort((a, b) => b.updatedAt - a.updatedAt)
+      const isLiveId = (id: string) => summaries.get(id)?.live === true
+      usage.startSeeding(
+        wins.filter((hs) => isLiveId(hs.id)).map((hs) => hs.id),
+        wins.filter((hs) => !isLiveId(hs.id)).map((hs) => hs.id),
+      )
+    }
     const every = (ms: number, fn: () => void) => {
       const t = setInterval(fn, ms)
       t.unref?.()
@@ -1226,6 +1315,7 @@ export const createStore: CreateStore = (deps): Store => {
 
   async function stop(): Promise<void> {
     stopped = true
+    usage.stop()
     pub.ready = false
     for (const u of unsubs.splice(0)) {
       try {
@@ -1260,6 +1350,8 @@ export const createStore: CreateStore = (deps): Store => {
     orchestration: orchestrationSummary,
     orchestrationRun,
     orchestrationTask,
+    usage: (q) => usage.report(q),
+    usageCalls: (q) => usage.calls(q),
   }
 }
 

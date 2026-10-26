@@ -31,12 +31,15 @@ const OverviewView = lazy(() => import('../views/overview/OverviewView').then((m
 const StreamView = lazy(() => import('../views/stream/StreamView').then((m) => ({ default: m.StreamView })))
 const TimelineView = lazy(() => import('../views/timeline/TimelineView').then((m) => ({ default: m.TimelineView })))
 
+const TokensView = lazy(() => import('../views/tokens/TokensView').then((m) => ({ default: m.TokensView })))
+
 const VIEWS: Record<ViewId, () => ReactNode> = {
   dag: () => <DagView />,
   timeline: () => <TimelineView />,
   stream: () => <StreamView />,
   changes: () => <ChangesView />,
   overview: () => <OverviewView />,
+  tokens: () => <TokensView />,
 }
 
 /** The active view inside the view panel, wrapped in an error boundary. */

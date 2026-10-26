@@ -4,16 +4,19 @@ import {
   LIMITS, type ActivityEvent, type ActivityKind, type ActivityPage, type Artifact, type AttentionItem, type BootstrapPayload,
   type FileChange, type FileDiff, type FleetStats, type Harness, type OrchRunDetail, type OrchTaskDetail, type OrchestrationSummary,
   type OrcaSnapshot, type PartDetail, type ServerMeta, type SessionDetail, type SessionSummary, type SessionTree, type StreamEvent,
-  type TranscriptMessage, type TranscriptPage,
+  type TranscriptMessage, type TranscriptPage, type UsageCallsPage, type UsageEstimate, type UsageReport, type UsageSample, type UsageScope,
+  type UsageScopeKind,
 } from '../../shared/contract'
+import { compareSamples } from '../../shared/usage-math'
 import { api } from '../api/client'
 import { connectStream, type StreamHandle } from '../api/sse'
 import { getStored, setStored } from '../lib/storage'
 import { addNotice } from '../shell/notices'
 import { selectDescendants, selectRootSessions } from './selectors'
 import { readUrlSelection, startUrlSync } from './url'
+import { usageBus } from './usage-bus'
 
-export type ViewId = 'dag' | 'timeline' | 'stream' | 'changes' | 'overview'
+export type ViewId = 'dag' | 'timeline' | 'stream' | 'changes' | 'overview' | 'tokens'
 export type ConnectionState = 'connecting' | 'live' | 'reconnecting' | 'offline'
 
 /** A lazily fetched resource: stale data is kept while refreshing; errors are stored, not thrown. */
@@ -34,6 +37,22 @@ export interface StreamFilters {
   paused: boolean
 }
 
+/** Tokens view preferences (persisted as `occ-tokens`). */
+export interface TokensPrefs {
+  scope: 'auto' | UsageScopeKind
+  /** null = all time (fleet: the server window). */
+  windowMs: number | null
+  units: 'tokens' | 'cost'
+  middle: 'agent' | 'session' | 'model' | 'auto'
+  scale: 'balanced' | 'linear'
+  showCalls: boolean
+  overlay: boolean
+}
+
+export const DEFAULT_TOKENS_PREFS: TokensPrefs = {
+  scope: 'auto', windowMs: null, units: 'tokens', middle: 'auto', scale: 'balanced', showCalls: false, overlay: true,
+}
+
 export interface UiState {
   view: ViewId
   selectedRootId: string | null
@@ -51,11 +70,26 @@ export interface UiState {
   streamFilters: StreamFilters
   dagDirection: { session: 'RIGHT' | 'DOWN'; orchestration: 'RIGHT' | 'DOWN' }
   collapsedWorkspaces: Record<string, boolean>
+  tokens: TokensPrefs
 }
 
 export const ACTIVITY_RING_MAX = 20_000
 export const DOCK_MIN = 320
 export const DOCK_MAX = 640
+/** Ring cap for live usage samples. */
+export const USAGE_RING_MAX = 50_000
+
+export interface UsageSlice {
+  samples: { byId: Record<string, UsageSample>; /** compareSamples order */ order: string[]; version: number }
+  /** In-flight estimates keyed by sessionId. */
+  estimates: Record<string, UsageEstimate>
+}
+
+/** Cache key of a usage report: `${kind}:${id ?? ''}:${windowMs ?? 'all'}:${middle ?? ''}`. */
+export function usageReportKey(scope: UsageScope, windowMs: number | null | undefined, middle?: string | null): string {
+  return `${scope.kind}:${scope.id ?? ''}:${windowMs ?? 'all'}:${middle ?? ''}`
+}
+export const usageCallsKey = (scope: UsageScope): string => `${scope.kind}:${scope.id ?? ''}`
 
 export interface OccState {
   meta: ServerMeta | null
@@ -85,6 +119,11 @@ export interface OccState {
   scopedActivity: Record<string, Loadable<ActivityPage>>
   runs: Record<string, Loadable<OrchRunDetail>>
   tasks: Record<string, Loadable<OrchTaskDetail>>
+  usage: UsageSlice
+  /** key: see `usageReportKey` */
+  usageReports: Record<string, Loadable<UsageReport>>
+  /** key: `${kind}:${id ?? ''}` (pages merged, oldest → newest) */
+  usageCalls: Record<string, Loadable<UsageCallsPage>>
   ui: UiState
 
   init(): Promise<void>
@@ -113,6 +152,7 @@ export interface OccState {
   setStreamFilters(p: Partial<StreamFilters>): void
   setDagDirection(kind: 'session' | 'orchestration', d: 'RIGHT' | 'DOWN'): void
   toggleWorkspaceCollapsed(key: string): void
+  setTokensPrefs(p: Partial<TokensPrefs>): void
 
   fetchSessionDetail(id: string, o?: { force?: boolean }): Promise<void>
   fetchTree(rootId: string, o?: { force?: boolean }): Promise<void>
@@ -124,6 +164,8 @@ export interface OccState {
   fetchScopedActivity(scope: { rootId?: string; sessionId?: string }, o?: { older?: boolean; kinds?: ActivityKind[]; force?: boolean }): Promise<void>
   fetchRun(id: string, o?: { force?: boolean }): Promise<void>
   fetchTask(id: string, o?: { force?: boolean }): Promise<void>
+  fetchUsageReport(scope: UsageScope, o?: { windowMs?: number | null; bucketMs?: number; middle?: 'agent' | 'session' | 'model' | 'auto'; force?: boolean }): Promise<void>
+  fetchUsageCalls(scope: UsageScope, o?: { older?: boolean; force?: boolean }): Promise<void>
 }
 
 /* ───────────────────────── helpers ───────────────────────── */
@@ -145,6 +187,7 @@ function loadUi(): UiState {
     streamFilters: { ...DEFAULT_STREAM_FILTERS, ...stored, paused: false },
     dagDirection: { session: 'RIGHT', orchestration: 'DOWN', ...getStored('occ-dag-direction', {}) },
     collapsedWorkspaces: getStored('occ-collapsed-workspaces', {}),
+    tokens: { ...DEFAULT_TOKENS_PREFS, ...getStored<Partial<TokensPrefs>>('occ-tokens', {}) },
   }
 }
 
@@ -152,7 +195,7 @@ function defaultUi(): UiState {
   return {
     view: 'dag', selectedRootId: null, selectedSessionId: null, selectedActivityId: null, selectedRunId: null, selectedTaskId: null,
     liveOnly: false, harnessFilter: 'all', railQuery: '', theme: 'dark', dockWidth: 384, paletteOpen: false, shortcutsOpen: false,
-    streamFilters: { ...DEFAULT_STREAM_FILTERS }, dagDirection: { session: 'RIGHT', orchestration: 'DOWN' }, collapsedWorkspaces: {},
+    streamFilters: { ...DEFAULT_STREAM_FILTERS }, dagDirection: { session: 'RIGHT', orchestration: 'DOWN' }, collapsedWorkspaces: {}, tokens: { ...DEFAULT_TOKENS_PREFS },
   }
 }
 
@@ -165,7 +208,12 @@ function emptyData() {
     activity: { byId: {}, order: [], version: 0 } as OccState['activity'],
     orca: null as OrcaSnapshot | null, attention: [] as AttentionItem[], stats: null as FleetStats | null, orchestration: null as OrchestrationSummary | null,
     details: {}, trees: {}, transcripts: {}, parts: {}, diffs: {}, fileChanges: {}, artifacts: {}, scopedActivity: {}, runs: {}, tasks: {},
+    usage: emptyUsage(), usageReports: {}, usageCalls: {},
   }
+}
+
+function emptyUsage(version = 0): UsageSlice {
+  return { samples: { byId: {}, order: [], version }, estimates: {} }
 }
 
 /** Binary-search insert position keeping `order` sorted by event ts (stable for equal ts). */
@@ -175,6 +223,18 @@ function insertIndex(order: string[], byId: Record<string, ActivityEvent>, ts: n
   while (lo < hi) {
     const mid = (lo + hi) >>> 1
     if (byId[order[mid]].ts <= ts) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/** Binary-search insert position keeping `order` sorted by compareSamples. */
+function usageInsertIndex(order: string[], byId: Record<string, UsageSample>, x: UsageSample): number {
+  let lo = 0
+  let hi = order.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (compareSamples(byId[order[mid]], x) <= 0) lo = mid + 1
     else hi = mid
   }
   return lo
@@ -250,7 +310,7 @@ export const useOcc = create<OccState>()(
 
     /** Generic cached fetch: dedupes in-flight requests, keeps stale data while loading, stores errors. */
     function load<T>(
-      slice: 'details' | 'trees' | 'transcripts' | 'parts' | 'diffs' | 'fileChanges' | 'artifacts' | 'scopedActivity' | 'runs' | 'tasks',
+      slice: 'details' | 'trees' | 'transcripts' | 'parts' | 'diffs' | 'fileChanges' | 'artifacts' | 'scopedActivity' | 'runs' | 'tasks' | 'usageReports' | 'usageCalls',
       key: string, fetcher: () => Promise<T>, o: { force?: boolean; dedupeKey?: string; merge?: (prev: T | null, next: T) => T } = {},
     ): Promise<void> {
       const cur = (get()[slice] as Record<string, Loadable<T>>)[key]
@@ -365,7 +425,7 @@ export const useOcc = create<OccState>()(
               ui = { ...ui, selectedSessionId: d, selectedRootId: d }
             } else ui = { ...ui, selectedSessionId: null }
           }
-          const reset = s.bootstrapped ? { details: {}, trees: {}, transcripts: {}, parts: {}, diffs: {}, fileChanges: {}, artifacts: {}, scopedActivity: {}, runs: {}, tasks: {} } : {}
+          const reset = s.bootstrapped ? { details: {}, trees: {}, transcripts: {}, parts: {}, diffs: {}, fileChanges: {}, artifacts: {}, scopedActivity: {}, runs: {}, tasks: {}, usageReports: {}, usageCalls: {}, usage: emptyUsage(s.usage.samples.version + 1) } : {}
           return {
             ...reset,
             meta: b.meta, bootstrapped: true, bootstrapError: null, seq: b.seq, sessions, activity: { byId, order: capped.map((e) => e.id), version: s.activity.version + 1 },
@@ -472,6 +532,40 @@ export const useOcc = create<OccState>()(
           case 'attention': set({ seq: e.seq, lastEventAt: Date.now(), attention: e.items }); return
           case 'stats': set({ seq: e.seq, lastEventAt: Date.now(), stats: e.stats }); return
           case 'meta': set({ seq: e.seq, lastEventAt: Date.now(), meta: e.meta }); return
+          case 'usage': {
+            const accepted: UsageSample[] = []
+            set((s) => {
+              const byId = s.usage.samples.byId
+              const order = s.usage.samples.order
+              for (const x of e.samples) {
+                const prev = byId[x.id]
+                if (prev && prev.ledgerSeq > x.ledgerSeq) continue
+                accepted.push(x)
+                if (prev) {
+                  byId[x.id] = x
+                  if (prev.ts === x.ts) continue
+                  order.splice(order.indexOf(x.id), 1)
+                } else byId[x.id] = x
+                order.splice(usageInsertIndex(order, byId, x), 0, x.id)
+              }
+              while (order.length > USAGE_RING_MAX) { const id = order.shift()!; delete byId[id] }
+              let estimates = s.usage.estimates
+              if (e.estimates.length) {
+                estimates = { ...estimates }
+                for (const est of e.estimates) {
+                  if (est.inFlight) estimates[est.sessionId] = est
+                  else delete estimates[est.sessionId]
+                }
+              }
+              return {
+                seq: e.seq, lastEventAt: Date.now(),
+                usage: { samples: { byId, order, version: s.usage.samples.version + 1 }, estimates },
+              }
+            })
+            // After the state update, so listeners reading the store see the new data.
+            usageBus.emit({ samples: accepted, estimates: e.estimates })
+            return
+          }
           case 'orchestration':
             set({ seq: e.seq, lastEventAt: Date.now(), orchestration: e.summary })
             for (const id of e.changedRunIds) if (get().runs[id]) void get().fetchRun(id, { force: true })
@@ -515,6 +609,7 @@ export const useOcc = create<OccState>()(
       setShortcutsOpen(v) { patchUi({ shortcutsOpen: v }) },
       setStreamFilters(p) { patchUi({ streamFilters: { ...get().ui.streamFilters, ...p } }) },
       setDagDirection(kind, d) { patchUi({ dagDirection: { ...get().ui.dagDirection, [kind]: d } }) },
+      setTokensPrefs(p) { patchUi({ tokens: { ...get().ui.tokens, ...p } }) },
       toggleWorkspaceCollapsed(key) {
         const c = get().ui.collapsedWorkspaces
         patchUi({ collapsedWorkspaces: { ...c, [key]: !c[key] } })
@@ -567,6 +662,33 @@ export const useOcc = create<OccState>()(
       },
       fetchRun(id, o) { return load('runs', id, () => api.get('GET /api/orchestration/runs/:id', { path: { id } }), o) },
       fetchTask(id, o) { return load('tasks', id, () => api.get('GET /api/orchestration/tasks/:id', { path: { id } }), o) },
+      fetchUsageReport(scope, o) {
+        const windowMs = o?.windowMs ?? null
+        const middle = o?.middle && o.middle !== 'auto' ? o.middle : undefined
+        const key = usageReportKey(scope, windowMs, middle)
+        return load('usageReports', key, () => api.get('GET /api/usage', {
+          params: {
+            scope: scope.kind, id: scope.id ?? undefined, windowHours: windowMs != null ? windowMs / 3_600_000 : undefined,
+            bucketMs: o?.bucketMs, middle,
+          },
+        }), { force: o?.force, dedupeKey: o?.bucketMs ? `:${o.bucketMs}` : undefined })
+      },
+      fetchUsageCalls(scope, o) {
+        const key = usageCallsKey(scope)
+        const params = { scope: scope.kind, id: scope.id ?? undefined, limit: 200 }
+        if (o?.older) {
+          const cur = get().usageCalls[key]?.data
+          if (!cur?.hasMore || !cur.before) return Promise.resolve()
+          return load('usageCalls', key, () => api.get('GET /api/usage/calls', { params: { ...params, before: cur.before! } }), {
+            force: true, dedupeKey: ':older',
+            merge: (prev, next) => {
+              const seen = new Set(prev?.calls.map((c) => c.id))
+              return { calls: [...next.calls.filter((c) => !seen.has(c.id)), ...(prev?.calls ?? [])], before: next.before, hasMore: next.hasMore }
+            },
+          })
+        }
+        return load('usageCalls', key, () => api.get('GET /api/usage/calls', { params }), o)
+      },
     }
   }),
 )
@@ -597,3 +719,4 @@ useOcc.subscribe((s) => s.ui.harnessFilter, (v) => setStored('occ-harness-filter
 useOcc.subscribe((s) => s.ui.streamFilters, (v) => setStored('occ-stream-filters', { ...v, paused: false }))
 useOcc.subscribe((s) => s.ui.dagDirection, (v) => setStored('occ-dag-direction', v))
 useOcc.subscribe((s) => s.ui.collapsedWorkspaces, (v) => setStored('occ-collapsed-workspaces', v))
+useOcc.subscribe((s) => s.ui.tokens, (v) => setStored('occ-tokens', v))

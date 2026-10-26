@@ -6,6 +6,8 @@ import type {
   SessionSummary,
   StreamEvent,
   StreamPayload,
+  UsageEstimate,
+  UsageSample,
 } from '../../shared/contract.js'
 import type { Clock, HubPublisher, Logger } from '../types.js'
 
@@ -46,6 +48,8 @@ export function coalesce(queue: StreamPayload[]): StreamPayload[] {
   let orca: Partial<OrcaSnapshot> = {}
   const runIds = new Set<string>()
   const last = new Map<string, StreamPayload>()
+  const usageSamples = new Map<string, UsageSample>()
+  const usageEstimates = new Map<string, UsageEstimate>()
 
   for (const p of queue) {
     if (!order.includes(p.type)) order.push(p.type)
@@ -73,6 +77,18 @@ export function coalesce(queue: StreamPayload[]): StreamPayload[] {
         for (const id of p.changedRunIds) runIds.add(id)
         last.set('orchestration', p)
         break
+      case 'usage':
+        for (const u of p.samples) {
+          const prev = usageSamples.get(u.id)
+          if (!prev || u.ledgerSeq >= prev.ledgerSeq) usageSamples.set(u.id, u)
+        }
+        for (const e of p.estimates) {
+          const prev = usageEstimates.get(e.sessionId)
+          if (!prev || e.updatedAt > prev.updatedAt || (e.updatedAt === prev.updatedAt && !e.inFlight)) {
+            usageEstimates.set(e.sessionId, e)
+          }
+        }
+        break
       default:
         last.set(p.type, p)
     }
@@ -95,6 +111,9 @@ export function coalesce(queue: StreamPayload[]): StreamPayload[] {
         out.push({ type, summary: p.summary, changedRunIds: [...runIds] })
         break
       }
+      case 'usage':
+        out.push({ type, samples: [...usageSamples.values()], estimates: [...usageEstimates.values()] })
+        break
       default:
         out.push(last.get(type)!)
     }

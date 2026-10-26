@@ -6,12 +6,15 @@ import {
   type ApiError,
   type ApiResponses,
   type Harness,
+  type UsageScopeKind,
 } from '../../shared/contract.js'
 import type { Logger, StoreReader } from '../types.js'
 
 export class BadRequest extends Error {}
+export class Unavailable extends Error {}
 
 const HARNESSES: readonly Harness[] = ['opencode', 'copilot', 'claude', 'codex', 'unknown']
+const USAGE_SCOPES: readonly UsageScopeKind[] = ['fleet', 'workflow', 'session', 'run']
 const STATES: readonly AgentState[] = ['working', 'blocked', 'waiting', 'error', 'done', 'idle', 'unknown']
 
 type Query = URLSearchParams
@@ -46,6 +49,14 @@ function oneOf<T extends string>(name: string, raw: string | null, allowed: read
 function opt(q: Query, k: string): string | undefined {
   const v = q.get(k)
   return v === null || v === '' ? undefined : v
+}
+
+function usageScope(q: Query): { scope: UsageScopeKind; id: string | undefined } {
+  const scope = oneOf('scope', q.get('scope'), USAGE_SCOPES)
+  if (!scope) throw new BadRequest('Missing scope')
+  const id = opt(q, 'id')
+  if (scope !== 'fleet' && !id) throw new BadRequest('Missing id')
+  return { scope, id }
 }
 
 export const ROUTES: readonly RouteDef[] = [
@@ -118,6 +129,37 @@ export const ROUTES: readonly RouteDef[] = [
     query: ['rootId', 'windowHours'],
     handle: (s, _p, q) => ({ artifacts: s.artifacts({ rootId: opt(q, 'rootId'), windowMs: windowMs(q) }) }),
   },
+  {
+    key: 'GET /api/usage',
+    path: '/api/usage',
+    query: ['scope', 'id', 'windowHours', 'bucketMs', 'middle'],
+    handle: (s, _p, q) => {
+      const { scope, id } = usageScope(q)
+      const query = {
+        scope: { kind: scope, id: scope === 'fleet' ? null : id! },
+        windowMs: windowMs(q),
+        bucketMs: int('bucketMs', q.get('bucketMs'), 1000, 86_400_000),
+        middle: oneOf('middle', q.get('middle'), ['agent', 'session', 'model'] as const),
+      }
+      if (!s.usage) throw new Unavailable('Usage is not available')
+      return s.usage(query)
+    },
+  },
+  {
+    key: 'GET /api/usage/calls',
+    path: '/api/usage/calls',
+    query: ['scope', 'id', 'before', 'limit'],
+    handle: (s, _p, q) => {
+      const { scope, id } = usageScope(q)
+      const query = {
+        scope: { kind: scope, id: scope === 'fleet' ? null : id! },
+        before: opt(q, 'before'),
+        limit: int('limit', q.get('limit'), 1, LIMITS.usageCallsPageMax) ?? 200,
+      }
+      if (!s.usageCalls) throw new Unavailable('Usage is not available')
+      return s.usageCalls(query)
+    },
+  },
   { key: 'GET /api/attention', path: '/api/attention', query: [], handle: (s) => ({ items: s.attention() }) },
   { key: 'GET /api/stats', path: '/api/stats', query: ['windowHours'], handle: (s, _p, q) => s.stats(windowMs(q)) },
   { key: 'GET /api/orca', path: '/api/orca', query: [], handle: (s) => s.orca() },
@@ -178,6 +220,7 @@ export function handleApi(store: StoreReader, pathname: string, query: URLSearch
     }
     return err(404, 'not_found', 'Unknown API route')
   } catch (e) {
+    if (e instanceof Unavailable) return err(503, 'unavailable', e.message)
     if (e instanceof BadRequest) return err(400, 'bad_request', e.message)
     log?.error('route %s failed: %s', pathname, e instanceof Error ? (e.stack ?? e.message) : String(e))
     return err(500, 'internal', 'Internal server error')

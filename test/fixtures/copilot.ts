@@ -14,6 +14,14 @@ export const OPAQUE_SENTINEL = 'REASONING-OPAQUE-SENTINEL'
 export const SECRET_PROMPT_SENTINEL = 'SECRET_PROMPT_SENTINEL'
 export const DEAD_PID = 999999
 
+/** Verified session.shutdown.modelMetrics[model] shape (plus decoy requestMessages-like fields never read). */
+export interface ShutdownModelMetric {
+  requests?: { count: number; cost: number }
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens?: number }
+  totalNanoAiu: number
+  tokenDetails?: { input?: { tokenCount: number } }
+}
+
 export interface RawEvent {
   id: string
   parentId: string | null
@@ -64,11 +72,11 @@ export interface CopilotFixture {
     toolComplete(callId: string, o?: { success?: boolean; result?: unknown; error?: unknown; metrics?: Record<string, unknown> }): RawEvent
     permRequested(requestId: string, o: { toolCallId?: string; kind?: string; command?: string }): RawEvent
     permCompleted(requestId: string, o?: { toolCallId?: string; kind?: string }): RawEvent
-    usage(premium: number): RawEvent
+    usage(premium: number, nanoAiu?: number): RawEvent
     autoMode(chosen: string): RawEvent
     error(message: string): RawEvent
     abort(reason: string): RawEvent
-    shutdown(o?: { systemTokens?: number; toolDefinitionsTokens?: number; conversationTokens?: number; totalApiDurationMs?: number }): RawEvent
+    shutdown(o?: { systemTokens?: number; toolDefinitionsTokens?: number; conversationTokens?: number; totalApiDurationMs?: number; modelMetrics?: Record<string, ShutdownModelMetric> }): RawEvent
     modelCallStarted(o?: { model?: string; turn?: number }): RawEvent
     modelCallSuccess(o: { prompt: number; cached?: number; completion: number; reasoning?: number; nanoAiu?: number; ttftMs?: number; durationMs?: number; model?: string; callId?: string; turn?: number; cacheWrite?: number }): RawEvent
   }
@@ -165,7 +173,7 @@ export function createCopilotFixture(root: string, opts: { startMs?: number } = 
         agentMode: 'interactive',
       }),
     permCompleted: (requestId, o = {}) => event('permission.completed', { requestId, toolCallId: o.toolCallId, result: { kind: o.kind ?? 'approved' } }),
-    usage: (premium) => event('session.usage_checkpoint', { totalPremiumRequests: premium, totalNanoAiu: 0 }),
+    usage: (premium, nanoAiu = 0) => event('session.usage_checkpoint', { totalPremiumRequests: premium, totalNanoAiu: nanoAiu }),
     autoMode: (chosen) => event('session.auto_mode_resolved', { chosenModel: chosen, routingMethod: 'router' }),
     error: (message) => event('session.error', { errorType: 'query', message }),
     abort: (reason) => event('abort', { reason }),

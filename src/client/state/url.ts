@@ -1,6 +1,6 @@
 import type { OccState, ViewId } from './store'
 
-const VIEWS: readonly ViewId[] = ['dag', 'timeline', 'stream', 'changes', 'overview']
+const VIEWS: readonly ViewId[] = ['dag', 'timeline', 'stream', 'changes', 'overview', 'tokens']
 const MAX_ID = 256
 
 export interface UrlSelection { s: string | null; v: ViewId | null; r: string | null; t: string | null; mock: boolean }
