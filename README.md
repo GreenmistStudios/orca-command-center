@@ -7,6 +7,20 @@ A read-only, local dashboard that shows what your coding agents (OpenCode, Copil
 you, truthfully and live, what every agent is doing, why, and what it changed. It never writes to
 agents, databases or Orca.
 
+![Tour of the views: Fleet, DAG, Timeline, Stream, Changes, Overview, Oversight](docs/images/tour.gif)
+
+*Screenshots and the tour are generated from the seeded mock fleet (`?mock=1`).*
+
+| Fleet | DAG |
+|---|---|
+| ![Fleet](docs/images/fleet.png) | ![DAG](docs/images/session-dag.png) |
+| **Changes** | **Oversight** |
+| ![Changes](docs/images/session-changes.png) | ![Oversight](docs/images/oversight.png) |
+| **Timeline** | **Stream** |
+| ![Timeline](docs/images/session-timeline.png) | ![Stream](docs/images/session-stream.png) |
+| **Overview** | **Light theme** |
+| ![Overview](docs/images/session-overview.png) | ![Light theme](docs/images/light-dag.png) |
+
 The experience is a four-beat loop:
 
 1. **Glance.** The header pulse (`3 working · 1 needs you · 30 idle`), the rail's state dots and
