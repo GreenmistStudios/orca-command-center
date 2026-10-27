@@ -1,4 +1,4 @@
-import { Command, Moon, Radar, Sun } from 'lucide-react'
+import { Command, LayoutGrid, Moon, Radar, Sun } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useNow } from '../hooks/useNow'
@@ -143,6 +143,7 @@ export function Header() {
   const theme = useOcc((s) => s.ui.theme)
   const toggleTheme = useOcc((s) => s.toggleTheme)
   const setPaletteOpen = useOcc((s) => s.setPaletteOpen)
+  const setOversightOpen = useOcc((s) => s.setOversightOpen)
   return (
     <motion.header
       initial={{ opacity: 0, y: -8 }}
@@ -158,7 +159,8 @@ export function Header() {
       <StatusBubble connection={connection} />
       <FleetPulse />
       <div className="text-muted-foreground ml-auto flex items-center gap-3 text-[11px]">
-                <Button onClick={() => setPaletteOpen(true)} className="gap-1.5" aria-label="Search (⌘K)"><Command size={12} />Search</Button>
+        <Button data-testid="oversight-button" onClick={() => setOversightOpen(true)} className="gap-1.5" aria-label="Oversight: all repos and agents (o)" title="Oversight: all repos and agents (o)"><LayoutGrid size={12} />Oversight</Button>
+        <Button onClick={() => setPaletteOpen(true)} className="gap-1.5" aria-label="Search (⌘K)"><Command size={12} />Search</Button>
         <IconButton aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick={toggleTheme}>
           <AnimatePresence mode="wait" initial={false}>
             <motion.span key={theme} initial={{ rotate: -90, scale: 0.6, opacity: 0 }} animate={{ rotate: 0, scale: 1, opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}>

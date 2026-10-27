@@ -24,6 +24,7 @@ export function useGlobalHotkeys(): void {
         if (e.defaultPrevented) return // a dialog already handled it
         if (ui.paletteOpen) st.setPaletteOpen(false)
         else if (ui.shortcutsOpen) st.setShortcutsOpen(false)
+        else if (ui.oversightOpen) st.setOversightOpen(false)
         else if (ui.selectedTaskId) st.selectTask(null)
         else if (ui.selectedSessionId) st.selectSession(null)
         else if (ui.selectedRunId) st.selectRun(null)
@@ -31,6 +32,8 @@ export function useGlobalHotkeys(): void {
       }
       if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return
       if (ui.paletteOpen || ui.shortcutsOpen || isTyping(e.target)) return
+      if (e.key === 'o') { st.setOversightOpen(!ui.oversightOpen); return }
+      if (ui.oversightOpen) return
       const k = e.key
       if (VIEW_KEYS[k]) { st.setView(VIEW_KEYS[k]); return }
       switch (k) {

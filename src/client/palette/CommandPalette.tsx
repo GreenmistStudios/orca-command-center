@@ -1,6 +1,6 @@
 import { Command } from 'cmdk'
 import { Dialog } from 'radix-ui'
-import { Activity, BellRing, Clipboard, FileDiff, FolderGit2, GitBranch, Keyboard, LayoutDashboard, Moon, Network, Radio, Search, SquareChartGantt, Waypoints, X, type LucideIcon } from 'lucide-react'
+import { Activity, BellRing, Clipboard, FileDiff, FolderGit2, GitBranch, Keyboard, LayoutDashboard, LayoutGrid, Moon, Network, Radio, Search, SquareChartGantt, Waypoints, X, type LucideIcon } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { formatRelative } from '../lib/format'
 import { selectWorkspaceGroups } from '../state/selectors'
@@ -9,6 +9,7 @@ import { HarnessTile } from '../ui/Monogram'
 import { StateDot } from '../ui/LiveDot'
 import { Kbd } from '../ui/Pills'
 import { ShortcutsDialog } from './ShortcutsDialog'
+import { OversightDialog } from '../views/oversight/OversightDialog'
 
 const VIEW_ITEMS: Array<{ id: ViewId; label: string; icon: LucideIcon; key: string }> = [
   { id: 'fleet', label: 'Fleet', icon: Network, key: '1' },
@@ -34,12 +35,13 @@ function Row({ value, keywords, icon, label, hint, onSelect, testId }: {
   )
 }
 
-/** ⌘K command palette (Plan F11) plus the shortcuts overlay. */
+/** ⌘K command palette (Plan F11) plus the shortcuts and oversight overlays. */
 export function CommandPalette() {
   return (
     <>
       <PaletteDialog />
       <ShortcutsDialog />
+      <OversightDialog />
     </>
   )
 }
@@ -182,6 +184,7 @@ function PaletteBody() {
           <Row testId="palette-action-live" value="action:live" keywords={['live only', 'filter']} icon={<Radio size={13} className="text-muted-foreground" />} label="Toggle Live only" hint={<Kbd>.</Kbd>} onSelect={run(() => state().setLiveOnly(!state().ui.liveOnly))} />
           <Row testId="palette-action-follow" value="action:follow" keywords={['stream', 'follow', 'tail']} icon={<Activity size={13} className="text-muted-foreground" />} label="Toggle stream follow" hint={<Kbd>f</Kbd>} onSelect={run(() => state().setStreamFilters({ follow: !state().ui.streamFilters.follow }))} />
           <Row testId="palette-action-clear" value="action:clear" keywords={['deselect', 'selection']} icon={<X size={13} className="text-muted-foreground" />} label="Clear selection" hint={<Kbd>esc</Kbd>} onSelect={run(() => { const s = state(); s.selectTask(null); s.selectSession(null); s.selectRun(null) })} />
+          <Row testId="palette-action-oversight" value="action:oversight" keywords={['birds eye', 'overview', 'all repos', 'all agents', 'board']} icon={<LayoutGrid size={13} className="text-muted-foreground" />} label="Open oversight" hint={<Kbd>o</Kbd>} onSelect={run(() => state().setOversightOpen(true))} />
           <Row testId="palette-action-shortcuts" value="action:shortcuts" keywords={['keyboard', 'help', 'keys']} icon={<Keyboard size={13} className="text-muted-foreground" />} label="Show shortcuts" hint={<Kbd>?</Kbd>} onSelect={run(() => state().setShortcutsOpen(true))} />
           <Row testId="palette-action-copy" value="action:copy-link" keywords={['url', 'share', 'copy link']} icon={<Clipboard size={13} className="text-muted-foreground" />} label="Copy link to current view" onSelect={run(() => { void navigator.clipboard?.writeText(location.href) })} />
         </Command.Group>

@@ -1,5 +1,7 @@
 # Orca Command Center
 
+[![CI](https://github.com/geoff-powell/orca-command-center/actions/workflows/ci.yml/badge.svg)](https://github.com/geoff-powell/orca-command-center/actions/workflows/ci.yml)
+
 A read-only, local dashboard that shows what your coding agents (OpenCode, Copilot CLI) and
 [Orca](https://github.com/stablyai/orca) are doing across worktrees, in one live view. It tells
 you, truthfully and live, what every agent is doing, why, and what it changed. It never writes to
@@ -18,7 +20,9 @@ The experience is a four-beat loop:
 ## Layout
 
 - **Header:** Orca connection pill (with pid), stream pill (`Live` / `reconnecting…`), fleet pulse,
-  per-source health chips (click for paths and details), `⌘K` search, theme toggle.
+  per-source health chips (click for paths and details), **Oversight** (`o`: a full-screen board of
+  every repo → worktree → agent and run, sorted by what needs you; click an agent to open it),
+  `⌘K` search, theme toggle.
 - **Rail (left):** the fleet grouped by workspace/worktree, with state, harness, agent, model, age,
   tool count and cost; search, Live filter, harness filter; orchestration runs underneath.
 - **Center:** an attention strip (only when something needs you) above five switchable views.
@@ -48,12 +52,18 @@ Checks:
 npm test                  # vitest (server + client)
 npm run typecheck
 npm run e2e               # Playwright on installed Chrome; real + mock projects (server on :4280)
+npm run test:visual       # pixel screenshots of core surfaces on the seeded mock fleet
+npm run test:live         # integration against your live local data, incl. Orca + Copilot CLI (screenshots → test-results/live*/)
 npm run smoke             # API smoke against :4280   (node scripts/smoke.mjs --port N)
 npm run perf              # Plan §11 budgets; starts its own server on :4281
 npm run audit             # safety audit against :4280 + source scan
 ```
 
 The e2e, smoke and audit scripts expect (or, for e2e, start) `node bin/occ.mjs --no-open --port 4280`.
+Visual tests need Playwright's Chromium (`npx playwright install chromium`); update baselines with
+`npm run test:visual -- --update-snapshots`. CI (`.github/workflows/ci.yml`) runs typecheck, unit
+tests, build, the mock e2e and the visual tests. See [AGENTS.md](AGENTS.md) for contributor and
+agent guidance.
 
 ## Flags
 
@@ -123,6 +133,7 @@ diffs, artifacts), **Overview** (tokens, cost, throughput).
 | Key | Action |
 |---|---|
 | `⌘K` / `Ctrl+K` | Command palette |
+| `o` | Oversight: birds-eye board of every repo, worktree and agent |
 | `1`–`6` | Fleet · DAG · Timeline · Stream · Changes · Overview |
 | `j` / `k` | Next / previous root session |
 | `J` / `K` | Next / previous session in the cast |

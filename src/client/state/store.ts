@@ -49,6 +49,8 @@ export interface UiState {
   railWidth: number
   paletteOpen: boolean
   shortcutsOpen: boolean
+  /** Birds-eye oversight board (all repos and agents). */
+  oversightOpen: boolean
   streamFilters: StreamFilters
   dagDirection: { session: 'RIGHT' | 'DOWN'; orchestration: 'RIGHT' | 'DOWN' }
   collapsedWorkspaces: Record<string, boolean>
@@ -114,6 +116,7 @@ export interface OccState {
   setRailWidth(px: number): void
   setPaletteOpen(v: boolean): void
   setShortcutsOpen(v: boolean): void
+  setOversightOpen(v: boolean): void
   setStreamFilters(p: Partial<StreamFilters>): void
   setDagDirection(kind: 'session' | 'orchestration', d: 'RIGHT' | 'DOWN'): void
   toggleWorkspaceCollapsed(key: string): void
@@ -156,7 +159,7 @@ function loadUi(): UiState {
 function defaultUi(): UiState {
   return {
     view: 'fleet', selectedRootId: null, selectedSessionId: null, selectedActivityId: null, selectedRunId: null, selectedTaskId: null,
-    liveOnly: false, harnessFilter: 'all', railQuery: '', theme: 'dark', dockWidth: 384, railWidth: 288, paletteOpen: false, shortcutsOpen: false,
+    liveOnly: false, harnessFilter: 'all', railQuery: '', theme: 'dark', dockWidth: 384, railWidth: 288, paletteOpen: false, shortcutsOpen: false, oversightOpen: false,
     streamFilters: { ...DEFAULT_STREAM_FILTERS }, dagDirection: { session: 'RIGHT', orchestration: 'DOWN' }, collapsedWorkspaces: {},
   }
 }
@@ -520,6 +523,7 @@ export const useOcc = create<OccState>()(
       setRailWidth(px) { patchUi({ railWidth: clampRail(px) }) },
       setPaletteOpen(v) { patchUi({ paletteOpen: v }) },
       setShortcutsOpen(v) { patchUi({ shortcutsOpen: v }) },
+      setOversightOpen(v) { patchUi({ oversightOpen: v }) },
       setStreamFilters(p) { patchUi({ streamFilters: { ...get().ui.streamFilters, ...p } }) },
       setDagDirection(kind, d) { patchUi({ dagDirection: { ...get().ui.dagDirection, [kind]: d } }) },
       toggleWorkspaceCollapsed(key) {
