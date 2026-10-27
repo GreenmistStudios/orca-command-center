@@ -1,9 +1,10 @@
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { motion } from 'motion/react'
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { AttentionStrip } from '../attention/AttentionStrip'
 import { useCompact } from '../hooks/useCompact'
 import { Rail } from '../rail/Rail'
+import { RAIL_MAX, RAIL_MIN } from '../state/store'
 import { useOcc } from '../state/store'
 import { Banner } from './Banner'
 import { CenterView } from './CenterView'
@@ -38,6 +39,9 @@ export function Shell() {
   const compact = useCompact()
   const [railOpen, setRailOpen] = useState(false)
   const [dockOpen, setDockOpen] = useState(false)
+  const railWidth = useOcc((s) => s.ui.railWidth)
+  const setRailWidth = useOcc((s) => s.setRailWidth)
+  const railDrag = useRef<{ x: number; w: number } | null>(null)
   if (!ready) return <Splash />
   return (
     <div className="relative isolate flex h-full flex-col gap-2 p-2" data-testid="shell" data-compact={compact}>
@@ -48,10 +52,33 @@ export function Shell() {
       <Banner />
       <div className={compact ? 'flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto' : 'flex min-h-0 flex-1 gap-2'}>
         {/* Plain wrapper: the Rail renders its own <nav aria-label="Fleet"> landmark. */}
-        <motion.div initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ type: 'spring', stiffness: 380, damping: 34, mass: 0.9 }} className={compact ? 'contents' : 'flex w-72 shrink-0'}>
+        <motion.div initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ type: 'spring', stiffness: 380, damping: 34, mass: 0.9 }} style={compact ? undefined : { width: railWidth }} className={compact ? 'contents' : 'relative flex shrink-0'}>
           {compact ? (
             <FoldBand label="Rail" open={railOpen} onToggle={() => setRailOpen((v) => !v)} className="flex max-h-[45dvh]"><Rail /></FoldBand>
-          ) : <Rail />}
+          ) : (
+            <>
+              <Rail />
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize rail"
+                aria-valuemin={RAIL_MIN}
+                aria-valuemax={RAIL_MAX}
+                aria-valuenow={railWidth}
+                tabIndex={0}
+                data-testid="rail-handle"
+                className="focus-ring hover:bg-selection/30 absolute inset-y-0 -right-1.5 z-10 w-1.5 cursor-col-resize"
+                onPointerDown={(e) => { railDrag.current = { x: e.clientX, w: railWidth }; e.currentTarget.setPointerCapture(e.pointerId) }}
+                onPointerMove={(e) => { if (railDrag.current) setRailWidth(railDrag.current.w + (e.clientX - railDrag.current.x)) }}
+                onPointerUp={() => { railDrag.current = null }}
+                onPointerCancel={() => { railDrag.current = null }}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowRight') { e.preventDefault(); setRailWidth(railWidth + 24) }
+                  if (e.key === 'ArrowLeft') { e.preventDefault(); setRailWidth(railWidth - 24) }
+                }}
+              />
+            </>
+          )}
         </motion.div>
         <main id="main-view" className="flex min-h-[24rem] min-w-0 flex-1 flex-col gap-2">
           <AttentionStrip />
