@@ -1,5 +1,8 @@
 import type { SourceHealth, SourceId } from '../../shared/contract.js'
+import { createClaudeSource } from '../sources/claude/index.js'
+import { createCodexSource } from '../sources/codex/index.js'
 import { createCopilotSource } from '../sources/copilot/index.js'
+import { createCursorSource } from '../sources/cursor/index.js'
 import { createOpenCodeSource } from '../sources/opencode/index.js'
 import { createOrcaCliSource, createOrcaHooksSource } from '../sources/orca/index.js'
 import { createOrchestrationSource } from '../sources/orchestration/index.js'
@@ -26,10 +29,15 @@ export interface SourceSet {
 const LABELS: Record<SourceId, string> = {
   opencode: 'OpenCode',
   copilot: 'Copilot CLI',
+  claude: 'Claude Code',
+  codex: 'Codex',
+  cursor: 'Cursor',
   'orca-cli': 'Orca CLI',
   'orca-hooks': 'Orca hooks',
   'orca-orchestration': 'Orca orchestration',
 }
+
+const ORDER: SourceId[] = ['opencode', 'copilot', 'claude', 'codex', 'cursor', 'orca-cli', 'orca-hooks', 'orca-orchestration']
 
 function disabled(id: SourceId, reason: string): SourceHealth {
   return { id, label: LABELS[id], status: 'disabled', path: null, version: null, detail: reason, lastReadAt: null, lastChangeAt: null }
@@ -39,7 +47,7 @@ function disabled(id: SourceId, reason: string): SourceHealth {
 export function buildSources(deps: SourceDeps): SourceSet {
   const { config } = deps
   const set: SourceSet = { harnesses: [], cli: null, hooks: null, orch: null, all: [], disabled: [] }
-  const order: SourceId[] = ['opencode', 'copilot', 'orca-cli', 'orca-hooks', 'orca-orchestration']
+  const order = ORDER
   const placeholders = new Map<SourceId, SourceHealth>()
 
   if (config.opencodeDb) {
@@ -53,6 +61,19 @@ export function buildSources(deps: SourceDeps): SourceSet {
     set.harnesses.push(s)
     set.all.push(s)
   } else placeholders.set('copilot', disabled('copilot', 'Copilot directory not found (~/.copilot)'))
+
+  const jsonl = [
+    { id: 'claude', dir: config.claudeDir, create: createClaudeSource, reason: 'Claude Code directory not found (~/.claude)' },
+    { id: 'codex', dir: config.codexDir, create: createCodexSource, reason: 'Codex home not found (~/.codex)' },
+    { id: 'cursor', dir: config.cursorDir, create: createCursorSource, reason: 'Cursor directory not found (~/.cursor)' },
+  ] as const
+  for (const j of jsonl) {
+    if (j.dir) {
+      const s = j.create(deps)
+      set.harnesses.push(s)
+      set.all.push(s)
+    } else placeholders.set(j.id, disabled(j.id, j.reason))
+  }
 
   if (config.orcaCli) {
     set.cli = createOrcaCliSource(deps)
@@ -75,7 +96,7 @@ export function buildSources(deps: SourceDeps): SourceSet {
 
 /** Health of every source, constructed or disabled, in canonical order. */
 export function allHealth(set: SourceSet): SourceHealth[] {
-  const order: SourceId[] = ['opencode', 'copilot', 'orca-cli', 'orca-hooks', 'orca-orchestration']
+  const order = ORDER
   const byId = new Map<SourceId, SourceHealth>()
   for (const d of set.disabled) byId.set(d.id, d)
   for (const s of set.all) {

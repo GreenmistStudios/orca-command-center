@@ -17,13 +17,14 @@ export type EpochMs = number
 /* ────────────────────────────── Harnesses ────────────────────────────── */
 
 /** The agent runtime ("harness") that produced a session. */
-export type Harness = 'opencode' | 'copilot' | 'claude' | 'codex' | 'unknown'
+export type Harness = 'opencode' | 'copilot' | 'claude' | 'codex' | 'cursor' | 'unknown'
 
 export const HARNESS_META: Record<Harness, { label: string; monogram: string }> = {
   opencode: { label: 'OpenCode', monogram: 'OC' },
   copilot: { label: 'Copilot CLI', monogram: 'CP' },
   claude: { label: 'Claude Code', monogram: 'CC' },
   codex: { label: 'Codex', monogram: 'CX' },
+  cursor: { label: 'Cursor', monogram: 'CU' },
   unknown: { label: 'Unknown', monogram: '??' },
 }
 
@@ -701,7 +702,7 @@ export interface FleetStats {
 
 /* ─────────────────────────── Meta & sources ──────────────────────────── */
 
-export type SourceId = 'opencode' | 'copilot' | 'orca-cli' | 'orca-hooks' | 'orca-orchestration'
+export type SourceId = 'opencode' | 'copilot' | 'claude' | 'codex' | 'cursor' | 'orca-cli' | 'orca-hooks' | 'orca-orchestration'
 export type SourceStatus = 'starting' | 'ok' | 'degraded' | 'missing' | 'error' | 'disabled'
 
 export interface SourceHealth {

@@ -16,7 +16,7 @@ describe('selectors', () => {
 
   it('roots are sorted by state priority then recency', () => {
     const roots = selectRootSessions(st())
-    expect(roots.map((r) => r.state)).toEqual(['blocked', 'waiting', 'working', 'working', 'done', 'idle'])
+    expect(roots.map((r) => r.state)).toEqual(['blocked', 'waiting', 'working', 'working', 'working', 'done', 'done', 'idle', 'idle'])
     expect(roots[0].id).toBe(MOCK_IDS.blocked)
     expect(roots).toBe(selectRootSessions(st())) // stable reference
   })
@@ -24,7 +24,7 @@ describe('selectors', () => {
   it('applies liveOnly, harness filter and query', () => {
     st().setLiveOnly(true)
     expect(selectRootSessions(st()).every((r) => r.live)).toBe(true)
-    expect(selectRootSessions(st())).toHaveLength(4)
+    expect(selectRootSessions(st())).toHaveLength(5)
     st().setLiveOnly(false)
     st().setHarnessFilter('copilot')
     expect(selectRootSessions(st()).map((r) => r.id)).toEqual([MOCK_IDS.copilot])

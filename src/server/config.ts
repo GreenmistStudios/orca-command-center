@@ -3,7 +3,7 @@ import { homedir as osHomedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CliError, isLoopbackHost, type CliOptions } from './cli.js'
-import { defaultCopilotDir, defaultOpencodeDb, defaultOrcaDirs, resolveOrcaCli } from './lib/paths.js'
+import { defaultClaudeDir, defaultCodexDir, defaultCopilotDir, defaultCursorDir, defaultOpencodeDb, defaultOrcaDirs, resolveOrcaCli } from './lib/paths.js'
 import type { Config } from './types.js'
 
 export interface ConfigDeps {
@@ -77,6 +77,24 @@ export function resolveConfig(
     else notes.push(`Copilot CLI not found at ${tilde(p)}`)
   }
 
+  // Claude Code, Codex, Cursor: same rules as Copilot (explicit path must exist; default is optional)
+  const optionalDir = (label: string, flag: string, disabled: boolean, explicit: string | null, fallback: string): string | null => {
+    if (disabled) {
+      notes.push(`${label} disabled (--no-${flag})`)
+      return null
+    }
+    if (explicit) {
+      if (!exists(explicit)) throw new CliError(`--${flag}-dir: cannot read ${explicit}`)
+      return explicit
+    }
+    if (exists(fallback)) return fallback
+    notes.push(`${label} not found at ${tilde(fallback)}`)
+    return null
+  }
+  const claudeDir = optionalDir('Claude Code', 'claude', cli.noClaude, cli.claudeDir, defaultClaudeDir(pe))
+  const codexDir = optionalDir('Codex', 'codex', cli.noCodex, cli.codexDir, defaultCodexDir(pe))
+  const cursorDir = optionalDir('Cursor', 'cursor', cli.noCursor, cli.cursorDir, defaultCursorDir(pe))
+
   // Orca dir
   let orcaDir: string | null = null
   if (cli.orcaDir) {
@@ -140,6 +158,9 @@ export function resolveConfig(
     hooksFile,
     opencodeDb,
     copilotDir,
+    claudeDir,
+    codexDir,
+    cursorDir,
     orcaCli,
     mcpServers: cli.mcpServers,
     ringSize: cli.ringSize,

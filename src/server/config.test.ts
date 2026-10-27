@@ -47,7 +47,7 @@ describe('resolveConfig', () => {
 
   it('explicit paths that are unreadable are hard errors', () => {
     const h = home()
-    for (const f of ['--opencode-db', '--orca-dir', '--copilot-dir']) {
+    for (const f of ['--opencode-db', '--orca-dir', '--copilot-dir', '--claude-dir', '--codex-dir', '--cursor-dir']) {
       expect(() => resolveConfig(cli(f, path.join(h, 'nope')), {}, { ...base, homedir: h })).toThrow(CliError)
     }
   })
@@ -72,5 +72,25 @@ describe('resolveConfig', () => {
   it('orcaCli: explicit wins over discovery', () => {
     const { config } = resolveConfig(cli('--orca-cli', '/bin/orca'), {}, { ...base, homedir: home(), env: { ORCA_CLI_COMMAND: '/other' } })
     expect(config.orcaCli).toBe('/bin/orca')
+  })
+  it('discovers Claude Code, Codex and Cursor dirs; env overrides and disable flags', () => {
+    const h = home()
+    for (const d of ['.claude', '.codex', '.cursor']) mkdirSync(path.join(h, d))
+    const found = resolveConfig(cli(), {}, { ...base, homedir: h }).config
+    expect([found.claudeDir, found.codexDir, found.cursorDir]).toEqual([path.join(h, '.claude'), path.join(h, '.codex'), path.join(h, '.cursor')])
+
+    const alt = path.join(h, 'alt')
+    mkdirSync(alt)
+    const env = { CLAUDE_CONFIG_DIR: alt, CODEX_HOME: alt }
+    const viaEnv = resolveConfig(cli(), env, { ...base, homedir: h, env }).config
+    expect([viaEnv.claudeDir, viaEnv.codexDir]).toEqual([alt, alt])
+
+    const { config, notes } = resolveConfig(cli('--no-claude', '--no-codex', '--no-cursor'), {}, { ...base, homedir: h })
+    expect([config.claudeDir, config.codexDir, config.cursorDir]).toEqual([null, null, null])
+    expect(notes.join('\n')).toMatch(/Claude Code disabled \(--no-claude\)/)
+
+    const none = resolveConfig(cli(), {}, { ...base, homedir: home() })
+    expect(none.config.cursorDir).toBeNull()
+    expect(none.notes.join('\n')).toMatch(/Cursor not found at/)
   })
 })

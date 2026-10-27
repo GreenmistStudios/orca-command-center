@@ -22,7 +22,7 @@ describe('Header', () => {
     await userEvent.hover(bubble)
     expect(await screen.findByTestId('orca-pill')).toHaveTextContent('Connected to a running Orca (pid 97499).')
     expect(screen.getByTestId('stream-pill')).toHaveTextContent('Live')
-    expect(screen.getAllByTestId('source-row')).toHaveLength(5)
+    expect(screen.getAllByTestId('source-row')).toHaveLength(8)
     act(() => useOcc.getState().setConnection('reconnecting'))
     expect(screen.getByTestId('stream-pill')).toHaveTextContent('Stream reconnecting…')
     expect(bubble).not.toHaveAttribute('data-health', 'ok')

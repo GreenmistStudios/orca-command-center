@@ -14,7 +14,7 @@ describe('Rail', () => {
     expect(screen.getByRole('navigation', { name: 'Fleet' })).toBeTruthy()
     expect(groupBtn()).toBeTruthy()
     const ids = rootIds()
-    expect(ids).toHaveLength(6)
+    expect(ids).toHaveLength(9)
     const pos = (id: string) => ids.indexOf(id)
     expect(pos(MOCK_IDS.blocked)).toBeLessThan(pos(MOCK_IDS.rootBuild))
     expect(pos(MOCK_IDS.waiting)).toBeLessThan(pos(MOCK_IDS.rootBuild))

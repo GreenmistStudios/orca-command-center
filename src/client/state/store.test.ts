@@ -37,7 +37,7 @@ describe('store', () => {
   })
 
   it('adjacent root / cast navigation wraps', () => {
-    st().selectRoot(MOCK_IDS.idle)
+    st().selectRoot(MOCK_IDS.cursor)
     st().selectAdjacentRoot(1)
     expect(st().ui.selectedRootId).toBe(MOCK_IDS.blocked)
     st().selectRoot(MOCK_IDS.rootBuild)

@@ -15,9 +15,15 @@ export interface CliOptions {
   opencodeDb: string | null
   orcaDir: string | null
   copilotDir: string | null
+  claudeDir: string | null
+  codexDir: string | null
+  cursorDir: string | null
   orcaCli: string | null
   noOpencode: boolean
   noCopilot: boolean
+  noClaude: boolean
+  noCodex: boolean
+  noCursor: boolean
   noOrcaCli: boolean
   noOrchestration: boolean
   noHooks: boolean
@@ -42,9 +48,15 @@ Usage: occ [options]
   --opencode-db <path>   Explicit opencode.db (error if unreadable)
   --orca-dir <path>      Explicit Orca userData dir (error if unreadable)
   --copilot-dir <path>   Explicit Copilot dir (error if unreadable)
+  --claude-dir <path>    Explicit Claude Code config dir, e.g. ~/.claude (error if unreadable)
+  --codex-dir <path>     Explicit Codex home, e.g. ~/.codex (error if unreadable)
+  --cursor-dir <path>    Explicit Cursor dir, e.g. ~/.cursor (error if unreadable)
   --orca-cli <path>      Explicit orca executable
   --no-opencode          Disable the OpenCode source
   --no-copilot           Disable the Copilot CLI source
+  --no-claude            Disable the Claude Code source
+  --no-codex             Disable the Codex source
+  --no-cursor            Disable the Cursor source
   --no-orca-cli          Disable the Orca CLI source
   --no-orchestration     Disable orchestration.db
   --no-hooks             Disable Orca agent hooks
@@ -57,6 +69,7 @@ Usage: occ [options]
   --help                 Print this help
 
 Data sources (read-only): OpenCode opencode.db, Copilot CLI ~/.copilot/session-state,
+Claude Code ~/.claude/projects, Codex ~/.codex/sessions, Cursor ~/.cursor/projects/*/agent-transcripts,
 Orca orchestration.db + agent-hooks/last-status.json, and the \`orca\` CLI (status/ps/list).
 `
 
@@ -86,9 +99,15 @@ export function parseCli(argv: string[]): CliOptions | { help: true } | { versio
         'opencode-db': { type: 'string' },
         'orca-dir': { type: 'string' },
         'copilot-dir': { type: 'string' },
+        'claude-dir': { type: 'string' },
+        'codex-dir': { type: 'string' },
+        'cursor-dir': { type: 'string' },
         'orca-cli': { type: 'string' },
         'no-opencode': { type: 'boolean' },
         'no-copilot': { type: 'boolean' },
+        'no-claude': { type: 'boolean' },
+        'no-codex': { type: 'boolean' },
+        'no-cursor': { type: 'boolean' },
         'no-orca-cli': { type: 'boolean' },
         'no-orchestration': { type: 'boolean' },
         'no-hooks': { type: 'boolean' },
@@ -130,9 +149,15 @@ export function parseCli(argv: string[]): CliOptions | { help: true } | { versio
     opencodeDb: str('opencode-db'),
     orcaDir: str('orca-dir'),
     copilotDir: str('copilot-dir'),
+    claudeDir: str('claude-dir'),
+    codexDir: str('codex-dir'),
+    cursorDir: str('cursor-dir'),
     orcaCli: str('orca-cli'),
     noOpencode: !!values['no-opencode'],
     noCopilot: !!values['no-copilot'],
+    noClaude: !!values['no-claude'],
+    noCodex: !!values['no-codex'],
+    noCursor: !!values['no-cursor'],
     noOrcaCli: !!values['no-orca-cli'],
     noOrchestration: !!values['no-orchestration'],
     noHooks: !!values['no-hooks'],

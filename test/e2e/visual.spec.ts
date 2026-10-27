@@ -62,6 +62,16 @@ test.describe('visual (mock)', () => {
     })
   }
 
+  test('claude code session with a subagent: DAG view', async ({ page }) => {
+    await openMock(page)
+    await page.locator('[data-testid="rail-root-row"][data-session-id="3f9a2c71-5e0b-4d8a-9c16-7b2e4f8d1a05"]').click()
+    await expect(page.getByTestId('inspector-header')).toBeVisible()
+    await showView(page, 'DAG')
+    await expect(page.locator('.react-flow__node').nth(1)).toBeVisible()
+    await settle(page)
+    await expect(page).toHaveScreenshot('session-claude-dag.png')
+  })
+
   test('command palette', async ({ page }) => {
     await openMock(page)
     await page.keyboard.press('ControlOrMeta+k')
