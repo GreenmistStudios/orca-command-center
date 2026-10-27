@@ -11,6 +11,7 @@ export interface CliOptions {
   windowHours: number
   pollMs: number
   orcaPollMs: number
+  orcaTimeoutMs: number
   opencodeDb: string | null
   orcaDir: string | null
   copilotDir: string | null
@@ -37,6 +38,7 @@ Usage: occ [options]
   --window-hours <n>     Sessions window, 1-720 (default 24)
   --poll-ms <n>          SQLite change poll, 100-60000 (default 750)
   --orca-poll-ms <n>     Orca CLI poll, 1000-600000 (default 5000)
+  --orca-timeout-ms <n>  Orca CLI command timeout, 1000-120000 (default 15000)
   --opencode-db <path>   Explicit opencode.db (error if unreadable)
   --orca-dir <path>      Explicit Orca userData dir (error if unreadable)
   --copilot-dir <path>   Explicit Copilot dir (error if unreadable)
@@ -80,6 +82,7 @@ export function parseCli(argv: string[]): CliOptions | { help: true } | { versio
         'window-hours': { type: 'string' },
         'poll-ms': { type: 'string' },
         'orca-poll-ms': { type: 'string' },
+        'orca-timeout-ms': { type: 'string' },
         'opencode-db': { type: 'string' },
         'orca-dir': { type: 'string' },
         'copilot-dir': { type: 'string' },
@@ -123,6 +126,7 @@ export function parseCli(argv: string[]): CliOptions | { help: true } | { versio
     windowHours: int('window-hours', values['window-hours'] as string | undefined, 24, 1, 720),
     pollMs: int('poll-ms', values['poll-ms'] as string | undefined, 750, 100, 60_000),
     orcaPollMs: int('orca-poll-ms', values['orca-poll-ms'] as string | undefined, 5000, 1000, 600_000),
+    orcaTimeoutMs: int('orca-timeout-ms', values['orca-timeout-ms'] as string | undefined, 15_000, 1000, 120_000),
     opencodeDb: str('opencode-db'),
     orcaDir: str('orca-dir'),
     copilotDir: str('copilot-dir'),

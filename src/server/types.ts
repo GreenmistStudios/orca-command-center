@@ -66,6 +66,8 @@ export interface Config {
   pollMs: number
   /** Orca CLI poll (default 5000 ms). */
   orcaPollMs: number
+  /** Per-command Orca CLI timeout (default 15000 ms; `orca status` can take >10 s under load). */
+  orcaTimeoutMs: number
   /** Orca userData dir (contains orchestration.db, agent-hooks/). null = not found. */
   orcaDir: string | null
   orchestrationDb: string | null

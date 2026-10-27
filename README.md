@@ -65,6 +65,7 @@ occ [options]
   --window-hours <n>     Sessions window, 1-720 (default 24)
   --poll-ms <n>          SQLite change poll, 100-60000 (default 750)
   --orca-poll-ms <n>     Orca CLI poll, 1000-600000 (default 5000)
+  --orca-timeout-ms <n>  Orca CLI command timeout, 1000-120000 (default 15000)
   --opencode-db <path>   Explicit opencode.db (error if unreadable)
   --orca-dir <path>      Explicit Orca userData dir (error if unreadable)
   --copilot-dir <path>   Explicit Copilot dir (error if unreadable)
