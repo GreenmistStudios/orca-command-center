@@ -40,6 +40,6 @@ export default defineConfig({
       testMatch: 'visual.spec.ts',
       use: { channel: undefined, browserName: 'chromium', deviceScaleFactor: 1, locale: 'en-US', timezoneId: 'UTC' },
     },
-    { name: 'live', testMatch: 'live.spec.ts' },
+    { name: 'live', testMatch: /live(-copilot)?\.spec\.ts/ },
   ],
 })

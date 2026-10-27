@@ -43,6 +43,10 @@ Before finishing a change, run `npm run typecheck` and `npm test`. If you touche
 - `test/e2e/live.spec.ts` runs against real local data: it checks that the UI agrees with the API
   and saves screenshots to `test-results/live/` without comparing pixels. It skips when there are
   no sessions, so it does not run in CI.
+- `test/e2e/live-copilot.spec.ts` (also `npm run test:live`) covers Orca running with Copilot CLI
+  as the harness: Orca pill shows the API's pid, the Copilot harness filter shows exactly the
+  API's Copilot root sessions, and the inspector loads one. It skips unless Orca is running and a
+  Copilot root session exists. Screenshots go to `test-results/live-copilot/`.
 
 ## Rules
 

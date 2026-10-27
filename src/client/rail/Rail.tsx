@@ -333,6 +333,8 @@ export function Rail() {
               <button
                 key={h}
                 type="button"
+                data-testid="harness-filter"
+                data-harness={h}
                 aria-pressed={harness === h}
                 onClick={() => setHarness(h)}
                 className={cn(

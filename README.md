@@ -51,7 +51,7 @@ npm test                  # vitest (server + client)
 npm run typecheck
 npm run e2e               # Playwright on installed Chrome; real + mock projects (server on :4280)
 npm run test:visual       # pixel screenshots of core surfaces on the seeded mock fleet
-npm run test:live         # integration against your live local data (screenshots → test-results/live/)
+npm run test:live         # integration against your live local data, incl. Orca + Copilot CLI (screenshots → test-results/live*/)
 npm run smoke             # API smoke against :4280   (node scripts/smoke.mjs --port N)
 npm run perf              # Plan §11 budgets; starts its own server on :4281
 npm run audit             # safety audit against :4280 + source scan
