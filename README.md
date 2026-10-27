@@ -1,5 +1,7 @@
 # Orca Command Center
 
+[![CI](https://github.com/geoff-powell/orca-command-center/actions/workflows/ci.yml/badge.svg)](https://github.com/geoff-powell/orca-command-center/actions/workflows/ci.yml)
+
 A read-only, local dashboard that shows what your coding agents (OpenCode, Copilot CLI) and
 [Orca](https://github.com/stablyai/orca) are doing across worktrees, in one live view. It tells
 you, truthfully and live, what every agent is doing, why, and what it changed. It never writes to
@@ -48,12 +50,18 @@ Checks:
 npm test                  # vitest (server + client)
 npm run typecheck
 npm run e2e               # Playwright on installed Chrome; real + mock projects (server on :4280)
+npm run test:visual       # pixel screenshots of core surfaces on the seeded mock fleet
+npm run test:live         # integration against your live local data (screenshots → test-results/live/)
 npm run smoke             # API smoke against :4280   (node scripts/smoke.mjs --port N)
 npm run perf              # Plan §11 budgets; starts its own server on :4281
 npm run audit             # safety audit against :4280 + source scan
 ```
 
 The e2e, smoke and audit scripts expect (or, for e2e, start) `node bin/occ.mjs --no-open --port 4280`.
+Visual tests need Playwright's Chromium (`npx playwright install chromium`); update baselines with
+`npm run test:visual -- --update-snapshots`. CI (`.github/workflows/ci.yml`) runs typecheck, unit
+tests, build, the mock e2e and the visual tests. See [AGENTS.md](AGENTS.md) for contributor and
+agent guidance.
 
 ## Flags
 
