@@ -65,6 +65,7 @@ occ [options]
   --window-hours <n>     Sessions window, 1-720 (default 24)
   --poll-ms <n>          SQLite change poll, 100-60000 (default 750)
   --orca-poll-ms <n>     Orca CLI poll, 1000-600000 (default 5000)
+  --orca-timeout-ms <n>  Orca CLI command timeout, 1000-120000 (default 15000)
   --opencode-db <path>   Explicit opencode.db (error if unreadable)
   --orca-dir <path>      Explicit Orca userData dir (error if unreadable)
   --copilot-dir <path>   Explicit Copilot dir (error if unreadable)
@@ -115,14 +116,14 @@ Read-only, auto-discovered (override with the flags above):
 
 ## Views and keyboard shortcuts
 
-Views: **DAG** (subagent tree, or an orchestration run's task graph), **Timeline** (parallelism and
+Views: **Fleet** (default: one live graph of every project, worktree, session and run; deep links with `s=`/`r=` still open the DAG), **DAG** (subagent tree, or an orchestration run's task graph), **Timeline** (parallelism and
 idle gaps), **Stream** (virtualized firehose with filters, follow and pause), **Changes** (files and
 diffs, artifacts), **Overview** (tokens, cost, throughput).
 
 | Key | Action |
 |---|---|
 | `⌘K` / `Ctrl+K` | Command palette |
-| `1`–`5` | DAG · Timeline · Stream · Changes · Overview |
+| `1`–`6` | Fleet · DAG · Timeline · Stream · Changes · Overview |
 | `j` / `k` | Next / previous root session |
 | `J` / `K` | Next / previous session in the cast |
 | `Esc` | Close overlay, then clear task → session → run |

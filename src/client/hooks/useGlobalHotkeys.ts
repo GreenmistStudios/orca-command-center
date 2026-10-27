@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useOcc, type ViewId } from '../state/store'
 
-const VIEW_KEYS: Record<string, ViewId> = { '1': 'dag', '2': 'timeline', '3': 'stream', '4': 'changes', '5': 'overview' }
+const VIEW_KEYS: Record<string, ViewId> = { '1': 'fleet', '2': 'dag', '3': 'timeline', '4': 'stream', '5': 'changes', '6': 'overview' }
 
 function isTyping(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null

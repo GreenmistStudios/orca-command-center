@@ -36,7 +36,9 @@ test.describe('console', () => {
     await expect(rows.first()).toBeVisible()
     expect(await rows.count()).toBeGreaterThanOrEqual(1)
 
-    // DAG renders ≥ 1 node.
+    // Fleet is the default landing view; switch to the DAG for the node check.
+    await expect(page.getByTestId('fleet-view')).toBeVisible()
+    await page.getByRole('tab', { name: /^(Run )?DAG$/ }).click()
     await expect(page.getByTestId('dag-view')).toBeVisible()
     await expect(page.locator('.react-flow__node').first()).toBeVisible({ timeout: 30_000 })
 
@@ -44,6 +46,11 @@ test.describe('console', () => {
     await rows.first().click()
     await expect(page.getByTestId('inspector-header')).toBeVisible()
     await expect(page.locator('[data-testid^="item-"]').first()).toBeVisible({ timeout: 30_000 })
+
+    // The Fleet view opens from the rail header button.
+    await page.getByTestId('rail-fleet-view').click()
+    await expect(page.getByTestId('fleet-view')).toBeVisible()
+    await expect(page.getByText('This view hit an error')).toHaveCount(0)
 
     // Every view tab renders without the error boundary.
     for (const name of VIEWS) {
@@ -69,5 +76,15 @@ test.describe('console', () => {
     await expect(page.getByTestId('command-palette')).toHaveCount(0)
 
     expect(consoleErrors, consoleErrors.join('\n')).toEqual([])
+  })
+  test('Fleet lands first and double-click opens the DAG', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'mock', 'mock project only')
+    await page.goto('/?mock=1')
+    await expect(page.getByTestId('fleet-view')).toBeVisible()
+    await expect(page.getByTestId('fleet-node-project').first()).toBeVisible({ timeout: 30_000 })
+    const session = page.getByTestId('fleet-node-session').first()
+    await expect(session).toBeVisible()
+    await session.dblclick()
+    await expect(page.getByTestId('dag-view')).toBeVisible()
   })
 })

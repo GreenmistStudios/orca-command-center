@@ -16,6 +16,14 @@ describe('url state', () => {
     const ui = { ...useOcc.getState().ui, selectedSessionId: 'ses_1', view: 'stream' as const, selectedRunId: 'run_1', selectedTaskId: 'tsk_1' }
     expect(readUrlSelection(buildUrlSearch(ui, '?mock=1'))).toEqual(sel)
   })
+  it('fleet is the default view; deep links default to dag', () => {
+    expect(readUrlSelection('?v=fleet').v).toBe('fleet')
+    const base = useOcc.getState().ui
+    expect(buildUrlSearch({ ...base, view: 'fleet', selectedSessionId: null, selectedRunId: null }, '')).toBe('')
+    expect(buildUrlSearch({ ...base, view: 'fleet', selectedSessionId: 'ses_1', selectedRunId: null }, '')).toBe('?s=ses_1&v=fleet')
+    expect(buildUrlSearch({ ...base, view: 'dag', selectedSessionId: 'ses_1', selectedRunId: null }, '')).toBe('?s=ses_1')
+    expect(buildUrlSearch({ ...base, view: 'dag', selectedSessionId: null, selectedRunId: null }, '')).toBe('?v=dag')
+  })
   it('applyUrlSelection restores selection and view', () => {
     renderWithMockStore(<div />)
     const id = Object.values(useOcc.getState().sessions)[3].id

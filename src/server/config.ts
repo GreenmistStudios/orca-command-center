@@ -134,6 +134,7 @@ export function resolveConfig(
     windowMs: cli.windowHours * 3_600_000,
     pollMs: cli.pollMs,
     orcaPollMs: cli.orcaPollMs,
+    orcaTimeoutMs: cli.orcaTimeoutMs,
     orcaDir,
     orchestrationDb,
     hooksFile,

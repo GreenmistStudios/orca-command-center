@@ -1,5 +1,5 @@
 import { motion } from 'motion/react'
-import { ChevronDown, ChevronRight, OctagonAlert } from 'lucide-react'
+import { ChevronDown, ChevronRight, Network, OctagonAlert } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { HARNESS_META, type Harness, type OrchRun, type SessionSummary } from '../../shared/contract'
 import { cn } from '../lib/cn'
@@ -304,8 +304,11 @@ export function Rail() {
     >
       <div className="panel-header flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <SectionLabel>Fleet</SectionLabel>
-          <span data-testid="rail-count" className="text-muted-foreground/70 text-[11px] tabular-nums">{total}</span>
+          <div className="flex items-center gap-2">
+            <SectionLabel>Fleet</SectionLabel>
+            <span data-testid="rail-count" className="text-muted-foreground/70 text-[11px] tabular-nums">{total}</span>
+          </div>
+          <FleetViewButton />
         </div>
         <input
           id={RAIL_SEARCH_ID}
@@ -353,5 +356,26 @@ export function Rail() {
       )}
       <Orchestrations now={now} />
     </motion.nav>
+  )
+}
+
+/** Opens the Fleet DAG view; lives in the rail header instead of the center view tabs. */
+function FleetViewButton() {
+  const active = useOcc((s) => s.ui.view === 'fleet')
+  const setView = useOcc((s) => s.setView)
+  return (
+    <button
+      type="button"
+      data-testid="rail-fleet-view"
+      aria-pressed={active}
+      title="Fleet view (1)"
+      onClick={() => setView('fleet')}
+      className={cn(
+        'focus-ring flex h-6 items-center gap-1 rounded-md border px-2 text-[11px]',
+        active ? 'border-selection/60 bg-selection/15 text-foreground' : 'border-panel-border/70 text-muted-foreground hover:text-foreground',
+      )}
+    >
+      <Network size={12} /> Fleet view
+    </button>
   )
 }

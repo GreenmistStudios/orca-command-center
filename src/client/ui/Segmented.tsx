@@ -52,12 +52,14 @@ export function TabList<T extends string>({
   tabs, value, onChange, className, 'aria-label': ariaLabel, idPrefix = 'tab',
 }: {
   tabs: Array<{ value: T; label: ReactNode; icon?: ReactNode; count?: number }>
-  value: T
+  /** `null` when no tab is active (e.g. a view opened from elsewhere); the first tab stays focusable. */
+  value: T | null
   onChange: (v: T) => void
   className?: string
   'aria-label'?: string
   idPrefix?: string
 }) {
+  const focusable = tabs.some((t) => t.value === value) ? value : tabs[0]?.value
   const move = (i: number, d: number) => {
     const n = tabs[(i + d + tabs.length) % tabs.length]
     onChange(n.value)
@@ -72,7 +74,7 @@ export function TabList<T extends string>({
           type="button"
           role="tab"
           aria-selected={t.value === value}
-          tabIndex={t.value === value ? 0 : -1}
+          tabIndex={t.value === focusable ? 0 : -1}
           className="view-tab"
           onClick={() => onChange(t.value)}
           onKeyDown={(e) => {
