@@ -28,8 +28,8 @@ The command center fuses every source Orca and its harnesses leave on disk into 
 - **Orca** — which agents are running in which worktree/terminal and their live state (hooks,
   CLI), plus orchestration runs, tasks, dependencies, dispatches and gates.
 - **Harness transcripts** — the actual work: thinking, tool calls, MCP calls, file edits,
-  subagent spawns, todos, tokens and cost (OpenCode first-class, Copilot CLI second;
-  Claude Code / Codex adapters later behind the same interface).
+  subagent spawns, todos, tokens and cost (OpenCode first-class; Copilot CLI, Claude Code,
+  Codex and Cursor behind the same interface).
 
 …and presents it in orca-viz's visual language as a command console: a fleet rail, a live agent
 DAG, an activity firehose, a timeline, a changes/artifacts browser, an overview scoreboard, and an
@@ -240,6 +240,7 @@ URL: `?s=<sessionId>&v=dag|timeline|stream|changes|overview&r=<runId>&t=<taskId>
                        ┌──────────────── occ server (Node ≥ 22.13, one process) ─────────────────┐
  opencode.db ─event tail┼▶ OpenCodeSource ─┐                                                        │
  ~/.copilot/session-state┼▶ CopilotSource ──┤ HarnessUpdate                                         │
+ claude/codex/cursor jsonl┼▶ JsonlSources ──┤                                                        │
  agent-hooks/last-status ┼▶ OrcaHooksSource ┼──────────────▶ Store (join · state · attention ·      │
  `orca status|worktree ps│                  │ OrcaCliUpdate      stats · artifacts · ring buffer)  │
    |terminal list`  ─────┼▶ OrcaCliSource ──┤                     │ publish(payload)  ▲ queries    │
@@ -269,6 +270,7 @@ URL: `?s=<sessionId>&v=dag|timeline|stream|changes|overview&r=<runId>&t=<taskId>
 | `src/server/sources/orca/**`, `test/fixtures/orca.ts` | Task-4 |
 | `src/server/sources/orchestration/**`, `test/fixtures/orchestration.ts` | Task-5 |
 | `src/server/sources/copilot/**`, `test/fixtures/copilot.ts` | Task-6 |
+| `src/server/sources/{jsonl,claude,codex,cursor}/**`, `test/fixtures/jsonl-harnesses.ts` | JSONL harnesses (Claude Code, Codex, Cursor) |
 | `src/client/{index.html,main.tsx,App.tsx}`, `src/client/{styles,ui,lib,state,api,shell,hooks}/**`, placeholder files for every view/rail/inspector/attention/palette, `test/client/**` | Task-7 |
 | `src/server/store/**` (replaces stub), `test/integration/**` | Task-8 |
 | `src/client/rail/**` | Task-9 |

@@ -40,6 +40,7 @@ function harnessOf(agent: string | null): Harness {
   if (a.includes('copilot')) return 'copilot'
   if (a.includes('claude')) return 'claude'
   if (a.includes('codex')) return 'codex'
+  if (a.includes('cursor')) return 'cursor'
   return 'unknown'
 }
 

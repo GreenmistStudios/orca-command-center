@@ -64,6 +64,14 @@ const MAX_BOOTSTRAP_BYTES = 2 * 1024 * 1024
 const MAX_EXTRAS = 400
 const TESTED_ORCH_SCHEMA = 43
 
+const PROVENANCE: Partial<Record<Harness, string>> = {
+  opencode: 'opencode.db · session',
+  copilot: 'copilot session-state · events.jsonl',
+  claude: 'claude projects · <session>.jsonl',
+  codex: 'codex sessions · rollout-*.jsonl',
+  cursor: 'cursor projects · agent-transcripts/*.jsonl',
+}
+
 const isHookOrOrchEvent = (e: ActivityEvent): boolean => e.source === 'orca.hooks' || e.kind === 'orchestration'
 
 export const createStore: CreateStore = (deps): Store => {
@@ -1022,7 +1030,7 @@ export const createStore: CreateStore = (deps): Store => {
     } catch (e) {
       log.debug('store: getFileChanges failed: %s', String(e))
     }
-    const provenance: string[] = [s.harness === 'opencode' ? 'opencode.db · session' : s.harness === 'copilot' ? 'copilot session-state · events.jsonl' : `${s.harness} · session`]
+    const provenance: string[] = [PROVENANCE[s.harness] ?? `${s.harness} · session`]
     if (s.orca?.paneKey) provenance.push(`Orca hooks · pane ${s.orca.paneKey}`)
     if (s.orca?.terminalHandle) provenance.push(`orca terminal list · ${s.orca.terminalHandle}`)
     if (s.orca?.runId) provenance.push(`orchestration.db · run ${s.orca.runId}${s.orca.role ? ` (${s.orca.role})` : ''}`)

@@ -54,6 +54,9 @@ describe('boot', () => {
     expect(boot.meta.sources.map((s) => [s.id, s.status])).toEqual([
       ['opencode', 'ok'],
       ['copilot', 'ok'],
+      ['claude', 'disabled'],
+      ['codex', 'disabled'],
+      ['cursor', 'disabled'],
       ['orca-cli', 'ok'],
       ['orca-hooks', 'ok'],
       ['orca-orchestration', 'ok'],
@@ -275,6 +278,9 @@ describe('resilience', () => {
       expect(b.meta.sources.map((s) => [s.id, s.status])).toEqual([
         ['opencode', 'disabled'],
         ['copilot', 'disabled'],
+        ['claude', 'disabled'],
+        ['codex', 'disabled'],
+        ['cursor', 'disabled'],
         ['orca-cli', 'disabled'],
         ['orca-hooks', 'disabled'],
         ['orca-orchestration', 'disabled'],

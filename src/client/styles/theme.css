@@ -50,6 +50,7 @@
   --harness-copilot-bg: #6d28d9; --harness-copilot-fg: #fff;
   --harness-claude-bg: #c2410c; --harness-claude-fg: #fff;
   --harness-codex-bg: #047857; --harness-codex-fg: #fff;
+  --harness-cursor-bg: #475569; --harness-cursor-fg: #fff;
   --harness-unknown-bg: var(--muted); --harness-unknown-fg: var(--muted-foreground);
 
   --kind-prompt: #0284c7; --kind-thinking: #7c3aed; --kind-text: var(--muted-foreground);
@@ -101,6 +102,7 @@
   --harness-copilot-bg: #a78bfa; --harness-copilot-fg: #09090b;
   --harness-claude-bg: #fdba74; --harness-claude-fg: #09090b;
   --harness-codex-bg: #6ee7b7; --harness-codex-fg: #09090b;
+  --harness-cursor-bg: #94a3b8; --harness-cursor-fg: #09090b;
 
   --kind-prompt: #7dd3fc; --kind-thinking: #c4b5fd; --kind-tool: #93c5fd; --kind-mcp: #5eead4;
   --kind-file-change: #86efac; --kind-subagent: #f9a8d4; --kind-todo: #cbd5e1; --kind-state: #fcd34d;
