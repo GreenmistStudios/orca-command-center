@@ -8,6 +8,7 @@ import { expect, test, type Page } from 'playwright/test'
 // Update baselines: npm run test:visual -- --update-snapshots
 
 const FIXED_NOW = new Date('2026-01-15T12:00:00Z')
+const ELK_CHUNK = /\/elk\.bundled[^/]*\.js(\?|$)/
 
 /** Fake-time target per page: every helper advances to an absolute instant, never "by" an amount. */
 const target = new WeakMap<Page, number>()
@@ -30,6 +31,9 @@ async function openMock(page: Page, query = '') {
   // Freeze time at exactly FIXED_NOW so the mock's live ticks only fire via explicit advances.
   await page.clock.pauseAt(FIXED_NOW)
   target.set(page, FIXED_NOW.getTime())
+  let elkRequested = false
+  page.on('request', (r) => { if (ELK_CHUNK.test(r.url())) elkRequested = true })
+  const elkLoaded = page.waitForEvent('requestfinished', { predicate: (r) => ELK_CHUNK.test(r.url()), timeout: 60_000 })
   await page.goto(`/?mock=1${query}`)
   // The mock backend is created lazily and reads Date.now(); wait for the UI to bootstrap from it
   // (on real I/O, with fake time frozen) before advancing fake time, so every run starts from
@@ -37,6 +41,16 @@ async function openMock(page: Page, query = '') {
   await expect(page.getByTestId('shell')).toBeVisible()
   await expect(page.getByTestId('rail-root-row').first()).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
+  // The default Fleet view lazy-loads ELK (~1.4 MB), but only once it mounts, which waits on
+  // (faked) animation frames. Step fake time a frame at a time until the chunk is requested, then
+  // wait for it in REAL time. On a cold cache (fresh build, CI) the load can take seconds; moving
+  // fake time meanwhile is what made captures drift past the mock's live ticks.
+  for (let i = 0; !elkRequested; i++) {
+    expect(i, 'ELK chunk was never requested').toBeLessThan(40)
+    await page.clock.runFor(16)
+    await page.waitForTimeout(20)
+  }
+  await elkLoaded
   await advance(page, 1_000)
 }
 
@@ -47,17 +61,18 @@ async function selectFirstSession(page: Page) {
 }
 
 async function waitForLayout(page: Page) {
-  // ELK is loaded with a real dynamic import and then runs on short timers (0 and 10 ms). With the
-  // fake clock paused those never fire on their own, so nudge fake time 1 ms at a time until no
-  // view-level spinner is showing. The drift is absorbed by the next advance() to its absolute
-  // target. (Scoped to the empty-state spinner: Stream rows have an unrelated inline "Loading…".)
+  // ELK runs its work on short timers. With the fake clock paused those never fire on their own,
+  // so nudge fake time 1 ms per poll until no view-level spinner is showing. The ELK chunk is
+  // already loaded (see openMock), so this takes a few ms of fake time, and every later advance()
+  // lands on its absolute target anyway. Scoped to the empty-state spinner: Stream rows have an
+  // unrelated inline "Loading…".
   const busy = page.getByTestId('empty-state').filter({ hasText: /^(Laying out|Loading…)/ })
   await expect.poll(async () => {
     await page.clock.runFor(1)
     return busy.count()
-  }, { timeout: 15_000, intervals: [25] }).toBe(0)
+  }, { timeout: 30_000, intervals: [25] }).toBe(0)
   const drift = (await fakeNow(page)) - target.get(page)!
-  expect(drift, 'layout must finish well before the next mock tick').toBeLessThan(250)
+  expect(drift, 'layout should need only a few ms of fake time once ELK is loaded').toBeLessThan(100)
 }
 
 async function showView(page: Page, name: string) {
@@ -74,6 +89,10 @@ async function settle(page: Page) {
   await waitForLayout(page)
   await advance(page, 1_000)
   await waitForLayout(page)
+  // Capture at a fixed fake instant, with nothing re-entering layout.
+  await advance(page, 250)
+  expect(await fakeNow(page)).toBe(target.get(page))
+  await expect(page.getByTestId('empty-state').filter({ hasText: /^(Laying out|Loading…)/ })).toHaveCount(0)
   await page.evaluate(() => document.fonts.ready)
 }
 
