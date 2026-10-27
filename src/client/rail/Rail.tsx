@@ -8,7 +8,7 @@ import { useNow } from '../hooks/useNow'
 import { selectDescendants, selectWorkspaceGroups, type WorkspaceGroup } from '../state/selectors'
 import { useOcc } from '../state/store'
 import {
-  AgentMonogram, EmptyState, HarnessTile, LiveDot, SectionLabel, Segmented, StateDot, StatusPill, Tooltip,
+  AgentMonogram, EmptyState, HarnessTile, LiveDot, SectionLabel, Segmented, StateDot, StatusPill, TokenMeter, Tooltip,
   kindColorVar, stateTone, useSpotlight, STATE_LABEL,
 } from '../ui'
 
@@ -82,7 +82,10 @@ function RootRow({
           </span>
         </span>
         {sub && <span className="text-muted-foreground/80 truncate pl-4 font-mono text-[10.5px]">{sub}</span>}
-        <span className="text-muted-foreground truncate pl-4 text-[11px]">{meta}</span>
+        <span className="text-muted-foreground flex min-w-0 items-baseline gap-2 pl-4 text-[11px]">
+          <span className="min-w-0 truncate">{meta}</span>
+          <TokenMeter s={s} now={now} className="ml-auto shrink-0 font-mono text-[10.5px]" />
+        </span>
         {s.live && s.current && (
           <span className="truncate pl-4 font-mono text-[10.5px]" style={{ color: kindColorVar(s.current.kind) }}>
             ▸ {s.current.label}{s.current.detail ? ` · ${s.current.detail}` : ''}

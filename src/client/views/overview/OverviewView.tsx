@@ -3,6 +3,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import type { FleetStats, SessionSummary } from '../../../shared/contract'
 import { cn } from '../../lib/cn'
 import { formatCost, formatCount, formatTokens, shortModel } from '../../lib/format'
+import { tokenBreakdown, tokenIO } from '../../lib/tokens'
 import { useOcc } from '../../state/store'
 import { Duration, EmptyState, HarnessTile, Panel, SectionLabel, StateDot, ToolBadge, kindColorVar } from '../../ui'
 import { Histogram, Sparkline } from './Histogram'
@@ -56,13 +57,14 @@ function Kpis({ stats }: { stats: FleetStats }) {
   const idle = Math.max(0, ss.live - ss.working - needs)
   const hist = stats.histogram
   const total = t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite
+  const io = tokenIO(t)
   return (
     <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6" data-testid="kpis">
       <Kpi testid="kpi-live" label="Live agents" value={ss.live} sub={`${ss.working} working · ${needs} needs you · ${idle} idle`} />
       <Kpi testid="kpi-tools" label="Tool calls" value={formatCount(a.toolCalls)} sub={<span className={cn(a.toolErrors > 0 && 'text-status-failed-ink')}>{a.toolErrors} errors</span>} spark={<Sparkline values={hist.map((b) => b.tools)} color={kindColorVar('tool')} />} />
       <Kpi testid="kpi-mcp" label="MCP calls" value={formatCount(a.mcpCalls)} sub={`${stats.mcpServers.length} servers`} spark={<Sparkline values={hist.map((b) => b.mcp)} color={kindColorVar('mcp')} />} />
       <Kpi testid="kpi-files" label="Files changed" value={formatCount(a.filesTouched)} sub={`${a.fileChanges} changes`} spark={<Sparkline values={hist.map((b) => b.edits)} color={kindColorVar('file-change')} />} />
-      <Kpi testid="kpi-tokens" label="Tokens" value={formatTokens(total)} sub={`${formatTokens(t.input)} in · ${formatTokens(t.output)} out`} title={`Input ${t.input.toLocaleString()} · Output ${t.output.toLocaleString()} · Reasoning ${t.reasoning.toLocaleString()} · Cache read ${t.cacheRead.toLocaleString()} · Cache write ${t.cacheWrite.toLocaleString()}`} />
+      <Kpi testid="kpi-tokens" label="Tokens" value={formatTokens(total)} sub={`${formatTokens(io.input)} in · ${formatTokens(io.output)} out`} title={tokenBreakdown(t)} />
       <Kpi testid="kpi-cost" label="Cost" value={formatCost(stats.cost)} sub={`${ss.total} sessions`} />
     </div>
   )
