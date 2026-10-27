@@ -221,8 +221,12 @@ not parsed at start (listed lazily on demand). `processAlive` = an `inuse.<pid>.
 `process.kill(pid, 0)` succeeds (EPERM counts as alive).
 
 Session id = directory name; title = `workspace.name` || first user message (≤ 80 chars);
-agent = `copilot`; directory = `workspace.cwd` || `session.start.context.cwd`; tokens = 0, cost = 0
-(facts carry premium requests).
+agent = `copilot`; directory = `workspace.cwd` || `session.start.context.cwd`; cost = 0 (facts carry
+premium requests). Tokens = the sum of `session.usage_record` events (one per LLM call), deduplicated by
+`usage.accounting.usageId` (falling back to `apiCallId`). Copilot's `inputTokens` includes cache reads and
+writes, and `outputTokens` includes reasoning, so `input = inputTokens − cacheReadTokens − cacheWriteTokens`
+and `output = outputTokens − reasoningTokens` (both clamped at 0). Per-message tokens stay `null`: usage
+records carry no turn id.
 
 ---
 
