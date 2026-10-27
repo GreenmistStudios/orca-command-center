@@ -27,11 +27,13 @@ export class ErrorBoundary extends Component<{ children: ReactNode; resetKey?: s
 
 const ChangesView = lazy(() => import('../views/changes/ChangesView').then((m) => ({ default: m.ChangesView })))
 const DagView = lazy(() => import('../views/dag/DagView').then((m) => ({ default: m.DagView })))
+const FleetView = lazy(() => import('../views/fleet/FleetView').then((m) => ({ default: m.FleetView })))
 const OverviewView = lazy(() => import('../views/overview/OverviewView').then((m) => ({ default: m.OverviewView })))
 const StreamView = lazy(() => import('../views/stream/StreamView').then((m) => ({ default: m.StreamView })))
 const TimelineView = lazy(() => import('../views/timeline/TimelineView').then((m) => ({ default: m.TimelineView })))
 
 const VIEWS: Record<ViewId, () => ReactNode> = {
+  fleet: () => <FleetView />,
   dag: () => <DagView />,
   timeline: () => <TimelineView />,
   stream: () => <StreamView />,

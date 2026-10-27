@@ -2,8 +2,8 @@ import { Activity, FileDiff, GitBranch, LayoutDashboard, SquareChartGantt } from
 import { useOcc, type ViewId } from '../state/store'
 import { TabList } from '../ui/Segmented'
 
-/** The five center views. Exported for the palette/hotkeys (Task-16). */
-export const VIEW_ORDER: ViewId[] = ['dag', 'timeline', 'stream', 'changes', 'overview']
+/** The six center views. Exported for the palette/hotkeys (Task-16). */
+export const VIEW_ORDER: ViewId[] = ['fleet', 'dag', 'timeline', 'stream', 'changes', 'overview']
 
 /** View switcher (`role=tablist`); the DAG tab reads "Run DAG" while an orchestration run is selected. */
 export function ViewTabs() {
@@ -15,7 +15,7 @@ export function ViewTabs() {
       aria-label="Views"
       idPrefix="view-tab"
       className="panel max-w-full gap-0.5 self-end overflow-x-auto p-0.5 max-lg:self-stretch"
-      value={view}
+      value={view === 'fleet' ? null : view}
       onChange={setView}
       tabs={[
         { value: 'dag', label: runSelected ? 'Run DAG' : 'DAG', icon: <GitBranch size={14} /> },

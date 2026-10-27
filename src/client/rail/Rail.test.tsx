@@ -20,6 +20,15 @@ describe('Rail', () => {
     expect(pos(MOCK_IDS.waiting)).toBeLessThan(pos(MOCK_IDS.rootBuild))
   })
 
+  it('header button opens the Fleet view', () => {
+    renderWithMockStore(<Rail />)
+    useOcc.getState().setView('dag')
+    const btn = screen.getByTestId('rail-fleet-view')
+    fireEvent.click(btn)
+    expect(useOcc.getState().ui.view).toBe('fleet')
+    expect(btn).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('Live filter, harness filter and query narrow the list', () => {
     renderWithMockStore(<Rail />)
     fireEvent.click(screen.getByRole('radio', { name: 'Live' }))

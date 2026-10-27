@@ -80,6 +80,15 @@ describe('Dock and tabs', () => {
     expect(useOcc.getState().ui.dockWidth).toBe(408)
   })
 
+  it('defaults to Fleet, which has no center tab (it lives in the rail)', () => {
+    renderWithMockStore(<ViewTabs />)
+    expect(useOcc.getState().ui.view).toBe('fleet')
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.map((t) => t.textContent)).not.toContain('Fleet')
+    expect(tabs.every((t) => t.getAttribute('aria-selected') === 'false')).toBe(true)
+    expect(tabs[0]).toHaveAttribute('tabindex', '0')
+  })
+
   it('view tabs switch views and relabel for runs', async () => {
     renderWithMockStore(<ViewTabs />)
     await userEvent.click(screen.getByRole('tab', { name: /Stream/ }))

@@ -51,7 +51,7 @@ describe('palette', () => {
 describe('hotkeys', () => {
   it('view keys, toggles, ignore-while-typing, Esc cascade', () => {
     renderWithMockStore(<Harness />)
-    key('3'); expect(useOcc.getState().ui.view).toBe('stream')
+    key('4'); expect(useOcc.getState().ui.view).toBe('stream')
     key(' '); expect(useOcc.getState().ui.streamFilters.paused).toBe(true)
     key('f'); expect(useOcc.getState().ui.streamFilters.follow).toBe(false)
     key('.'); expect(useOcc.getState().ui.liveOnly).toBe(true)
@@ -60,8 +60,8 @@ describe('hotkeys', () => {
     key('?'); expect(useOcc.getState().ui.shortcutsOpen).toBe(true)
     key('Escape'); expect(useOcc.getState().ui.shortcutsOpen).toBe(false)
     key('/'); expect(document.activeElement?.id).toBe('rail-search')
-    key('5', {}, screen.getByTestId('inp')); expect(useOcc.getState().ui.view).toBe('stream')
-    key('2'); expect(useOcc.getState().ui.view).toBe('timeline')
+    key('6', {}, screen.getByTestId('inp')); expect(useOcc.getState().ui.view).toBe('stream')
+    key('3'); expect(useOcc.getState().ui.view).toBe('timeline')
     key(' '); expect(useOcc.getState().ui.streamFilters.paused).toBe(true)
     useOcc.getState().selectTask('task-x')
     key('Escape'); expect(useOcc.getState().ui.selectedTaskId).toBeNull(); expect(useOcc.getState().ui.selectedSessionId).not.toBeNull()
