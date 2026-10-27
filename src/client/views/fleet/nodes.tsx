@@ -3,7 +3,7 @@ import { GitBranch, Network } from 'lucide-react'
 import { memo, type KeyboardEvent, type ReactNode } from 'react'
 import { HARNESS_META } from '../../../shared/contract'
 import { cn } from '../../lib/cn'
-import { formatCost, formatRelative } from '../../lib/format'
+import { formatCost, formatRelative, shortModel } from '../../lib/format'
 import { agentColorVar, HarnessTile, IconButton, orchStatusTone, StateDot, STATE_LABEL, stateTone, toneClasses } from '../../ui'
 import type { Direction } from '../dag/model'
 import type { FleetCounts, FleetNodeData } from './model'
@@ -139,7 +139,7 @@ function SessionNodeImpl({ data }: NodeProps) {
       </div>
       <div className="line-clamp-1 text-[11.5px] leading-snug font-medium">{s.title}</div>
       <div className="mt-auto truncate font-mono text-[9.5px] opacity-70">
-        {[s.agent, s.model].filter(Boolean).join(' · ') || '—'}
+        {[s.agent, shortModel(s.model?.modelId)].filter(Boolean).join(' · ') || '—'}
         {subs > 0 && ` · ${subs} subagent${subs === 1 ? '' : 's'} (${d.workingDescendants} working)`}
       </div>
     </Shell>

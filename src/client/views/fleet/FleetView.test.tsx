@@ -31,6 +31,13 @@ describe('FleetView', () => {
     expect(screen.getByTestId('fleet-summary').textContent).toMatch(/projects/)
   })
 
+  it('shows session model names, not [object Object]', async () => {
+    await ready()
+    const text = sessionNodes().map((n) => n.textContent).join('\n')
+    expect(text).not.toContain('[object')
+    expect(text).toMatch(/opus-5\.5|sonnet-5\.5/)
+  })
+
   it('toggles Active/All and persists scope', async () => {
     await ready()
     fireEvent.click(screen.getByRole('radio', { name: 'Active' }))
