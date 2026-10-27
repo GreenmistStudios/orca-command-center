@@ -87,4 +87,28 @@ test.describe('console', () => {
     await session.dblclick()
     await expect(page.getByTestId('dag-view')).toBeVisible()
   })
+
+  test('Oversight opens from the header and `o`, and opens an agent', async ({ page }, testInfo) => {
+    const mock = testInfo.project.name === 'mock'
+    await page.goto(mock ? '/?mock=1' : '/')
+    await expect(page.getByTestId('shell')).toBeVisible()
+
+    await page.getByTestId('oversight-button').click()
+    const board = page.getByTestId('oversight')
+    await expect(board).toBeVisible()
+    await expect(board.getByTestId('oversight-grid').or(board.getByTestId('empty-state'))).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(board).toHaveCount(0)
+
+    await page.keyboard.press('o')
+    await expect(board).toBeVisible()
+    const agent = board.getByTestId('oversight-agent').first()
+    if (mock || (await agent.count()) > 0) {
+      const id = await agent.getAttribute('data-session-id')
+      await agent.click()
+      await expect(board).toHaveCount(0)
+      await expect(page).toHaveURL(new RegExp(`[?&]s=${id}`))
+      await expect(page.getByTestId('dag-view')).toBeVisible()
+    }
+  })
 })

@@ -31,7 +31,7 @@ Before finishing a change, run `npm run typecheck` and `npm test`. If you touche
 ## Screenshot tests
 
 - `test/e2e/visual.spec.ts` captures core surfaces (fleet, each view with a session selected,
-  palette, shortcuts, status bubble, degraded sources, light theme) using `?mock=1`.
+  palette, shortcuts, oversight board, status bubble, degraded sources, light theme) using `?mock=1`.
 - Determinism depends on the fake clock: the clock is installed and paused at a fixed instant
   *before* navigation, and fake time advances only through `page.clock.runFor`, after the UI has
   bootstrapped. Keep this order when adding tests, or the mock's live ticks drift between runs.

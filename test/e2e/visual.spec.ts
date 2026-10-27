@@ -31,7 +31,9 @@ async function selectFirstSession(page: Page) {
 async function showView(page: Page, name: string) {
   await page.getByRole('tab', { name: new RegExp(`^(Run )?${name}$`) }).click()
   await expect(page.getByRole('tabpanel', { name: /view$/ })).toBeVisible()
-  await page.clock.runFor(500)
+  // ELK layout and view effects chain timers and promises; advance a fixed total in steps so the
+  // async work between timers can settle (one large runFor fires them all in a single batch).
+  for (let i = 0; i < 4; i++) await page.clock.runFor(500)
 }
 
 async function settle(page: Page) {
@@ -74,6 +76,15 @@ test.describe('visual (mock)', () => {
     await expect(page.getByTestId('shortcuts-dialog')).toBeVisible()
     await settle(page)
     await expect(page).toHaveScreenshot('shortcuts.png')
+  })
+
+  test('oversight board', async ({ page }) => {
+    await openMock(page)
+    await page.getByTestId('oversight-button').click()
+    await expect(page.getByTestId('oversight')).toBeVisible()
+    await expect(page.getByTestId('oversight-repo').first()).toBeVisible()
+    await settle(page)
+    await expect(page).toHaveScreenshot('oversight.png')
   })
 
   test('status bubble', async ({ page }) => {

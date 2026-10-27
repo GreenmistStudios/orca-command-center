@@ -20,7 +20,9 @@ The experience is a four-beat loop:
 ## Layout
 
 - **Header:** Orca connection pill (with pid), stream pill (`Live` / `reconnecting…`), fleet pulse,
-  per-source health chips (click for paths and details), `⌘K` search, theme toggle.
+  per-source health chips (click for paths and details), **Oversight** (`o`: a full-screen board of
+  every repo → worktree → agent and run, sorted by what needs you; click an agent to open it),
+  `⌘K` search, theme toggle.
 - **Rail (left):** the fleet grouped by workspace/worktree, with state, harness, agent, model, age,
   tool count and cost; search, Live filter, harness filter; orchestration runs underneath.
 - **Center:** an attention strip (only when something needs you) above five switchable views.
@@ -131,6 +133,7 @@ diffs, artifacts), **Overview** (tokens, cost, throughput).
 | Key | Action |
 |---|---|
 | `⌘K` / `Ctrl+K` | Command palette |
+| `o` | Oversight: birds-eye board of every repo, worktree and agent |
 | `1`–`6` | Fleet · DAG · Timeline · Stream · Changes · Overview |
 | `j` / `k` | Next / previous root session |
 | `J` / `K` | Next / previous session in the cast |

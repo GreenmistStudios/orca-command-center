@@ -4,6 +4,7 @@ import { Kbd } from '../ui/Pills'
 
 export const SHORTCUTS: Array<{ keys: string[]; label: string }> = [
   { keys: ['⌘/Ctrl', 'K'], label: 'Command palette' },
+  { keys: ['o'], label: 'Oversight: all repos and agents' },
   { keys: ['1', '–', '6'], label: 'Fleet · DAG · Timeline · Stream · Changes · Overview' },
   { keys: ['j', 'k'], label: 'Next / previous root session' },
   { keys: ['J', 'K'], label: 'Next / previous session in the cast' },
