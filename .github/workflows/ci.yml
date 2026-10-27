@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      update-snapshots:
+        description: Regenerate Linux visual baselines (uploaded as an artifact to commit)
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    name: E2E + visual (mock data)
+    runs-on: ubuntu-latest
+    needs: check
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium chrome
+
+      # `real` and `live` need local agent data, so CI runs only the mock-backed projects.
+      - name: E2E (mock)
+        run: npx playwright test --project mock
+
+      - name: Visual screenshots (mock)
+        if: ${{ !inputs.update-snapshots }}
+        run: |
+          if [ ! -d test/e2e/__screenshots__/linux ]; then
+            echo "::warning::No Linux visual baselines yet; run this workflow manually with update-snapshots=true and commit the artifact to test/e2e/__screenshots__/linux/"
+            exit 0
+          fi
+          npm run test:visual
+
+      - name: Regenerate Linux baselines
+        if: ${{ inputs.update-snapshots }}
+        run: npm run test:visual -- --update-snapshots
+
+      - name: Upload Linux baselines
+        if: ${{ inputs.update-snapshots }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines-linux
+          path: test/e2e/__screenshots__/linux/
+
+      - name: Upload Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

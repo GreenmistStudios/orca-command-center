@@ -25,7 +25,9 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test -c playwright.config.ts",
+    "e2e": "playwright test -c playwright.config.ts --project real --project mock",
+    "test:visual": "playwright test -c playwright.config.ts --project visual",
+    "test:live": "playwright test -c playwright.config.ts --project live",
     "smoke": "node scripts/smoke.mjs",
     "perf": "node scripts/perf.mjs",
     "audit": "node scripts/safety-audit.mjs"
