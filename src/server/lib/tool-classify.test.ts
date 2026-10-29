@@ -91,4 +91,37 @@ describe('tool classifier', () => {
   it('is case-insensitive for built-ins', () => {
     expect(createToolClassifier().classify('opencode', 'Bash').category).toBe('shell')
   })
+  it('claude code built-ins and mcp__server__tool', () => {
+    const c = createToolClassifier()
+    const cases: Array<[string, string]> = [
+      ['Bash', 'shell'], ['BashOutput', 'shell'], ['Read', 'read'], ['Glob', 'search'], ['Grep', 'search'],
+      ['Edit', 'edit'], ['MultiEdit', 'edit'], ['Write', 'write'], ['WebFetch', 'web'], ['Task', 'subagent'],
+      ['Agent', 'subagent'], ['TodoWrite', 'todo'], ['AskUserQuestion', 'question'], ['ExitPlanMode', 'question'], ['Skill', 'skill'],
+    ]
+    for (const [n, cat] of cases) expect(c.classify('claude', n).category).toBe(cat)
+    expect(c.classify('claude', 'mcp__github__get_issue')).toEqual({ category: 'mcp', mcpServer: 'github', displayName: 'get_issue' })
+    expect(c.classify('claude', 'mcp__chrome-devtools__take_snapshot')).toMatchObject({ mcpServer: 'chrome-devtools', displayName: 'take_snapshot' })
+  })
+
+  it('codex built-ins and server__tool', () => {
+    const c = createToolClassifier()
+    const cases: Array<[string, string]> = [
+      ['shell', 'shell'], ['exec_command', 'shell'], ['shell_command', 'shell'], ['apply_patch', 'patch'],
+      ['update_plan', 'todo'], ['view_image', 'read'], ['web_search', 'web'], ['spawn_agent', 'subagent'], ['wait', 'other'],
+    ]
+    for (const [n, cat] of cases) expect(c.classify('codex', n).category).toBe(cat)
+    expect(c.classify('codex', 'linear__list_issues')).toEqual({ category: 'mcp', mcpServer: 'linear', displayName: 'list_issues' })
+    expect(c.classify('codex', 'mcp__figma__get_code')).toMatchObject({ mcpServer: 'figma', displayName: 'get_code' })
+  })
+
+  it('cursor built-ins and mcp_ prefix', () => {
+    const c = createToolClassifier()
+    const cases: Array<[string, string]> = [
+      ['Shell', 'shell'], ['run_terminal_cmd', 'shell'], ['Read', 'read'], ['Grep', 'search'], ['StrReplace', 'edit'],
+      ['Write', 'write'], ['Delete', 'write'], ['ApplyPatch', 'patch'], ['TodoWrite', 'todo'], ['Task', 'subagent'],
+    ]
+    for (const [n, cat] of cases) expect(c.classify('cursor', n).category).toBe(cat)
+    expect(c.classify('cursor', 'mcp_github_get_file')).toEqual({ category: 'mcp', mcpServer: 'github', displayName: 'get_file' })
+    expect(c.classify('cursor', 'mcp__slack__post')).toMatchObject({ category: 'mcp', mcpServer: 'slack' })
+  })
 })

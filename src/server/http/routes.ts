@@ -11,7 +11,7 @@ import type { Logger, StoreReader } from '../types.js'
 
 export class BadRequest extends Error {}
 
-const HARNESSES: readonly Harness[] = ['opencode', 'copilot', 'claude', 'codex', 'unknown']
+const HARNESSES: readonly Harness[] = ['opencode', 'copilot', 'claude', 'codex', 'cursor', 'unknown']
 const STATES: readonly AgentState[] = ['working', 'blocked', 'waiting', 'error', 'done', 'idle', 'unknown']
 
 type Query = URLSearchParams

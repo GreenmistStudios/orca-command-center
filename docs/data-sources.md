@@ -1,7 +1,8 @@
 # Data sources — Orca Command Center
 
-Everything the command center shows comes from five read-only sources on this machine. This
-document is the data contract for the source adapters (Tasks 3–6) and the store (Task 8).
+Everything the command center shows comes from read-only sources on this machine: five agent
+harnesses (OpenCode, Copilot CLI, Claude Code, Codex, Cursor) and three Orca sources (hooks, CLI,
+orchestration DB). This document is the data contract for the source adapters and the store.
 Shapes below were verified against live data on 2026-10-26 (Orca 1.4.241, orchestration schema
 v43, OpenCode DB with the `event` table, Copilot CLI session-state).
 
@@ -18,7 +19,10 @@ v43, OpenCode DB with the `event` table, Copilot CLI session-state).
    `control_account`, `credential`, `permission`. Never open or read: `~/.local/share/opencode/auth.json`,
    `mcp-auth.json`, `<orca>/agent-hooks/endpoint.env`, `<orca>/daemon/*.token`,
    `<orca>/orca-runtime.json`, `<orca>/orca-e2ee-keypair.json`, `<orca>/agent-session-authority.key`,
-   `Cookies`, `~/.copilot/config.json`, any `*.key` / `*.token` / `*auth*.json`.
+   `Cookies`, `~/.copilot/config.json`, `~/.claude/.credentials.json`, `~/.claude.json`,
+   `~/.codex/auth.json`, `~/.cursor/mcp.json`, Cursor `chats/*/*/store.db` and `state.vscdb`, any
+   `*.key` / `*.token` / `*auth*.json`. The JSONL harnesses read only `projects/`, `sessions/`,
+   `session_index.jsonl` and `chats/*/*/meta.json`.
 3. **Short read transactions.** Never hold a statement or transaction open between polls (a
    long-lived reader blocks WAL checkpoints and makes the writer's WAL grow). Use
    `stmt.all()` / `stmt.get()` and let them complete.
@@ -219,6 +223,99 @@ not parsed at start (listed lazily on demand). `processAlive` = an `inuse.<pid>.
 Session id = directory name; title = `workspace.name` || first user message (≤ 80 chars);
 agent = `copilot`; directory = `workspace.cwd` || `session.start.context.cwd`; tokens = 0, cost = 0
 (facts carry premium requests).
+
+---
+
+## 2a. JSONL harnesses: shared runtime (`src/server/sources/jsonl/`)
+
+Claude Code, Codex and Cursor each log one append-only JSONL file per session. They share one
+tailing runtime (`source.ts`) and one normalizing base model (`model.ts`); each adapter only
+enumerates its files and parses its own line shapes.
+
+- **Discovery:** directories are listed through an mtime-cached `readdir` (re-listed only when the
+  directory changed); files are `stat`ed every tick while in the window, every 5th tick otherwise.
+  Files in the window are parsed at start (last 20 MB at most); older ones on demand, with an
+  LRU of 50 parsed idle models.
+- **Tailing:** `{size, offset}` per file; appended bytes only; a partial trailing line stays
+  buffered; a shrunk file is re-read and emits `reset`.
+- **Time:** lines without a timestamp are stamped 1 ms apart ending at the file mtime, which keeps
+  file order.
+- **Ids:** activity ids are `<harness>:<sessionId>:<native>` (session ids never contain `:`).
+- **Subagents:** a child session links to the parent's spawning tool call by the id the tool
+  reported, else by exact prompt match; `spawn.status` follows the tool (Codex: the child's own state).
+- **Normalization:** prompts, assistant text, thinking (readable text only; signatures and
+  encrypted reasoning are never read), tool calls with `classifyTool(<harness>, name)`, file
+  changes and diffs (`old_string/new_string`, `edits[]`, `content`, patch text, or a result diff),
+  todos from todo tools, `question`-category tools running ⇒ transcriptState `waiting`.
+- `processAlive` is `null` (no lock files); cost is 0 (not recorded); tokens as each harness reports.
+
+## 2b. Claude Code — `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/`
+
+`projects/<encoded-cwd>/<sessionId>.jsonl`; subagents at
+`projects/<encoded-cwd>/<sessionId>/subagents/agent-<agentId>.jsonl` (child id
+`<sessionId>.agent-<agentId>`). Line envelope: `{type, uuid, parentUuid, sessionId, timestamp, cwd,
+version, gitBranch, isSidechain, isMeta?, message, toolUseResult?}`.
+
+| type | Normalized |
+|---|---|
+| `user`, string content or `text` blocks | kind `prompt` (wrappers stripped: `<system-reminder>`, `<command-name>` → `/name args`; `isMeta` and `<local-command-*>` skipped); turn ⇒ working |
+| `user`, `tool_result` blocks | completes the tool call (`is_error` ⇒ error); `toolUseResult.structuredPatch` ⇒ diff + line counts; `toolUseResult.agentId` ⇒ subagent link |
+| `user` text `[Request interrupted by user…` | running tools ⇒ error, kind `error` "Interrupted", turn ⇒ done |
+| `assistant` (`message.id` groups streamed lines) | `text` / `thinking` (`thinking` text only) / `tool_use` ⇒ tool call; usage counted once per `message.id`; `tool_use` or open tools ⇒ working, else done |
+| `assistant` with `isApiErrorMessage` | kind `error`, transcriptState `error` |
+| `system` (`level: error`) | kind `error`; `turn_duration` / `stop_hook_summary` ⇒ done |
+| `custom-title` > `ai-title` > `summary` | title (else first prompt) |
+| `isSidechain: true` in a parent file (older versions) | ignored |
+
+Tools: `Bash, BashOutput, KillShell` (shell), `Read, LS, NotebookRead` (read), `Glob, Grep`
+(search), `Edit, MultiEdit, NotebookEdit` (edit), `Write` (write; `toolUseResult.type: create` ⇒
+FileChange `create`), `WebFetch, WebSearch` (web), `Task, Agent` (subagent), `TodoWrite` (todo),
+`AskUserQuestion, ExitPlanMode` (question ⇒ waiting), `Skill, SlashCommand` (skill),
+`mcp__<server>__<tool>` (MCP). Permission prompts are not in the transcript; Orca hooks report them.
+
+## 2c. Codex — `${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`
+
+Session id = the uuid in the file name (= `session_meta.id`, = Orca's `providerSession.id`).
+Thread names: `<codexHome>/session_index.jsonl` (`{id, thread_name}`). Line envelope:
+`{timestamp, type, payload}`.
+
+| type / payload.type | Normalized |
+|---|---|
+| `session_meta` | cwd, `cli_version`, originator, `model_provider`, `git.branch`; `source: {subagent: {thread_spawn: {parent_thread_id, agent_role, agent_nickname}}}` ⇒ child of `parent_thread_id`; other non-user origins (review, compact, `internal`, `memory_consolidation`, `guardian_review`) ⇒ hidden |
+| `turn_context` | cwd, model, effort, approval policy |
+| `event_msg` `task_started` / `task_complete` / `turn_aborted` | transcriptState working / done / done (+ kind `error` "Turn aborted") |
+| `event_msg` `user_message` | kind `prompt` (response_item user messages are injected context and are skipped) |
+| `event_msg` `token_count` | tokens from `info.total_token_usage` (cached ⇒ cacheRead, reasoning split out) |
+| `event_msg` `error` | kind `error`, transcriptState `error` |
+| `event_msg` `exec_approval_request` / `apply_patch_approval_request` | pending until the call starts ⇒ transcriptState `waiting` |
+| `response_item` `message` (assistant) | kind `text` |
+| `response_item` `reasoning` | kind `thinking` from `summary` only (`encrypted_content` never read) |
+| `response_item` `function_call` / `custom_tool_call` / `local_shell_call` / `web_search_call` | tool call (`arguments` JSON-decoded) |
+| `response_item` `function_call_output` / `custom_tool_call_output` | completes the call; non-zero `metadata.exit_code` (or `Exit code: N`) ⇒ error; `spawn_agent` output `agent_id` ⇒ subagent link |
+
+Tools: `shell, shell_command, exec_command, write_stdin, local_shell` (shell), `read_file,
+list_dir, view_image` (read), `apply_patch` (patch; files from `*** Update/Add/Delete File:`),
+`update_plan` (todo), `web_search` (web), `spawn_agent` (subagent), `request_user_input` (question),
+`mcp__<server>__<tool>` or `<server>__<tool>` (MCP).
+
+## 2d. Cursor — `~/.cursor/projects/<slug>/agent-transcripts/`
+
+`agent-transcripts/<chatId>.jsonl` or `agent-transcripts/<chatId>/<chatId>.jsonl`, written by the
+Cursor agent (IDE and `cursor-agent` CLI). Optional metadata: `~/.cursor/chats/<hash>/<chatId>/meta.json`
+(`title`, `cwd`, `createdAtMs`, model). Only `meta.json` is read under `chats/`; never `store.db`.
+Cursor IDE's `state.vscdb` is not read.
+
+Lines: `{role: user|assistant|tool, message: {content: [blocks]}}`, usually without timestamps
+(see §2a for time). User text is reduced to the `<user_query>` body. `tool_use` blocks start
+calls; `tool_result` blocks (when logged) complete them; a text-only assistant reply settles any
+open calls and marks the turn done; a trailing `tool_use` ⇒ working. Directory = `meta.cwd`, else
+the slug decoded by probing the filesystem (`Users-me-my-app` → `/Users/me/my-app`).
+
+Tools: `Shell, run_terminal_cmd` (shell), `Read, LS, ReadLints` (read), `Grep, Glob,
+SemanticSearch, codebase_search` (search), `StrReplace, Edit, MultiEdit, EditNotebook` (edit),
+`Write, Delete` (write; `Delete` ⇒ FileChange `delete`), `ApplyPatch` (patch), `WebSearch,
+WebFetch` (web), `Task` (subagent), `TodoWrite` (todo), `AskQuestion` (question), `mcp_<server>_<tool>`
+(MCP).
 
 ---
 

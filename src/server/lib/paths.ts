@@ -40,6 +40,24 @@ export function defaultCopilotDir(o: PathEnv = {}): string {
   return join(home, '.copilot')
 }
 
+/** Claude Code config dir: $CLAUDE_CONFIG_DIR, else ~/.claude (contains projects/). */
+export function defaultClaudeDir(o: PathEnv = {}): string {
+  const { env, home, join } = ctx(o)
+  return env.CLAUDE_CONFIG_DIR || join(home, '.claude')
+}
+
+/** Codex home: $CODEX_HOME, else ~/.codex (contains sessions/YYYY/MM/DD/rollout-*.jsonl). */
+export function defaultCodexDir(o: PathEnv = {}): string {
+  const { env, home, join } = ctx(o)
+  return env.CODEX_HOME || join(home, '.codex')
+}
+
+/** Cursor dir: ~/.cursor (contains projects/<slug>/agent-transcripts/ and chats/). */
+export function defaultCursorDir(o: PathEnv = {}): string {
+  const { home, join } = ctx(o)
+  return join(home, '.cursor')
+}
+
 function isExecutable(file: string): boolean {
   try {
     if (!statSync(file).isFile()) return false

@@ -2,10 +2,24 @@
 
 [![CI](https://github.com/geoff-powell/orca-command-center/actions/workflows/ci.yml/badge.svg)](https://github.com/geoff-powell/orca-command-center/actions/workflows/ci.yml)
 
-A read-only, local dashboard that shows what your coding agents (OpenCode, Copilot CLI) and
-[Orca](https://github.com/stablyai/orca) are doing across worktrees, in one live view. It tells
-you, truthfully and live, what every agent is doing, why, and what it changed. It never writes to
-agents, databases or Orca.
+A read-only, local dashboard that shows what your coding agents (OpenCode, Copilot CLI, Claude
+Code, Codex, Cursor) and [Orca](https://github.com/stablyai/orca) are doing across worktrees, in
+one live view. It tells you, truthfully and live, what every agent is doing, why, and what it
+changed. It never writes to agents, databases or Orca.
+
+![Tour of the views: Fleet, DAG, Timeline, Stream, Changes, Overview, Oversight](docs/images/tour.gif)
+
+*Screenshots and the tour are generated from the seeded mock fleet (`?mock=1`).*
+
+| Fleet | DAG |
+|---|---|
+| ![Fleet](docs/images/fleet.png) | ![DAG](docs/images/session-dag.png) |
+| **Changes** | **Oversight** |
+| ![Changes](docs/images/session-changes.png) | ![Oversight](docs/images/oversight.png) |
+| **Timeline** | **Stream** |
+| ![Timeline](docs/images/session-timeline.png) | ![Stream](docs/images/session-stream.png) |
+| **Overview** | **Light theme** |
+| ![Overview](docs/images/session-overview.png) | ![Light theme](docs/images/light-dag.png) |
 
 The experience is a four-beat loop:
 
@@ -79,9 +93,15 @@ occ [options]
   --opencode-db <path>   Explicit opencode.db (error if unreadable)
   --orca-dir <path>      Explicit Orca userData dir (error if unreadable)
   --copilot-dir <path>   Explicit Copilot dir (error if unreadable)
+  --claude-dir <path>    Explicit Claude Code config dir, e.g. ~/.claude (error if unreadable)
+  --codex-dir <path>     Explicit Codex home, e.g. ~/.codex (error if unreadable)
+  --cursor-dir <path>    Explicit Cursor dir, e.g. ~/.cursor (error if unreadable)
   --orca-cli <path>      Explicit orca executable
   --no-opencode          Disable the OpenCode source
   --no-copilot           Disable the Copilot CLI source
+  --no-claude            Disable the Claude Code source
+  --no-codex             Disable the Codex source
+  --no-cursor            Disable the Cursor source
   --no-orca-cli          Disable the Orca CLI source
   --no-orchestration     Disable orchestration.db
   --no-hooks             Disable Orca agent hooks
@@ -102,15 +122,19 @@ Read-only, auto-discovered (override with the flags above):
 |---|---|
 | OpenCode | `opencode.db`: `session`, `message`, `part`, `event`, `todo`, `project` (indexed queries only; change detection via `PRAGMA data_version` + event tail) |
 | Copilot CLI | `~/.copilot/session-state/*` (workspace metadata and `events.jsonl`) |
+| Claude Code | `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/<session>.jsonl` and `<session>/subagents/*.jsonl` |
+| Codex | `${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD/rollout-*.jsonl`, `session_index.jsonl` (thread names) |
+| Cursor | `~/.cursor/projects/*/agent-transcripts/*.jsonl`, `~/.cursor/chats/*/*/meta.json` |
 | Orca hooks | `<orca>/agent-hooks/last-status.json` |
 | Orca CLI | `orca status --json`, `orca worktree ps --json`, `orca terminal list --json` (nothing else) |
 | Orchestration | `<orca>/orchestration.db` (runs, tasks, dispatches, messages, gates) |
 
 **Never read:** `auth.json`, `mcp-auth.json`, `endpoint.env`, `daemon/*.token`,
 `orca-runtime.json`, `orca-e2ee-keypair.json`, `agent-session-authority.key`, `Cookies`,
-`~/.copilot/config.json`, any `*.key` / `*.token` / `*auth*.json`, and the OpenCode tables
-`account`, `account_state`, `control_account`, `credential`, `permission`. Details in
-[docs/data-sources.md](docs/data-sources.md).
+`~/.copilot/config.json`, `~/.claude/.credentials.json`, `~/.claude.json`, `~/.codex/auth.json`,
+Cursor's `store.db` / `state.vscdb` / `mcp.json`, any `*.key` / `*.token` / `*auth*.json`, and the
+OpenCode tables `account`, `account_state`, `control_account`, `credential`, `permission`. Details
+in [docs/data-sources.md](docs/data-sources.md).
 
 ## Safety model
 
@@ -152,8 +176,9 @@ URL state: `?s=<sessionId>&v=dag|timeline|stream|changes|overview&r=<runId>&t=<t
 - **"Orca isn't running; showing last-known state."** Start Orca. The console keeps showing
   hook/orchestration data it last saw; the Orca pill turns green when `orca status` succeeds.
 - **A source shows `missing` / `error`** (click the source chips in the header for the path and
-  reason). Pass an explicit path (`--opencode-db`, `--copilot-dir`, `--orca-dir`, `--orca-cli`) or
-  disable the source (`--no-copilot`, …). One failing source never takes the console down.
+  reason). Pass an explicit path (`--opencode-db`, `--copilot-dir`, `--claude-dir`, `--codex-dir`,
+  `--cursor-dir`, `--orca-dir`, `--orca-cli`) or disable the source (`--no-copilot`, …). One
+  failing source never takes the console down.
 - **Schema newer than expected.** Orca or OpenCode updated its database. The console degrades
   (affected features are noted in the source detail) rather than guessing; update the console.
 - **Port in use.** `occ` exits with an error instead of picking another port; choose one with
@@ -163,11 +188,11 @@ URL state: `?s=<sessionId>&v=dag|timeline|stream|changes|overview&r=<runId>&t=<t
 
 ## Architecture
 
-One Node process: sources (OpenCode, Copilot, Orca hooks, Orca CLI, orchestration DB) normalize
-into shared contract types; the store joins them and derives state, attention, stats and
-artifacts, and publishes to a hub that serves a REST API and one Server-Sent-Events stream
-(`/api/stream`, coalesced to ≤ 4 frames/s). The React 19 SPA (zustand, React Flow + ELK, Tailwind)
-bootstraps from `/api/bootstrap` and applies stream events.
+One Node process: sources (OpenCode, Copilot, Claude Code, Codex, Cursor, Orca hooks, Orca CLI,
+orchestration DB) normalize into shared contract types; the store joins them and derives state,
+attention, stats and artifacts, and publishes to a hub that serves a REST API and one
+Server-Sent-Events stream (`/api/stream`, coalesced to ≤ 4 frames/s). The React 19 SPA (zustand,
+React Flow + ELK, Tailwind) bootstraps from `/api/bootstrap` and applies stream events.
 
 - [Plan.md](Plan.md): product, UX, architecture, derivation rules, API, budgets, testing
 - [docs/data-sources.md](docs/data-sources.md): what each source provides and the safety rules

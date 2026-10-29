@@ -76,6 +76,12 @@ export interface Config {
   opencodeDb: string | null
   /** ~/.copilot (contains session-state/). null = not found / disabled. */
   copilotDir: string | null
+  /** Claude Code config dir, e.g. ~/.claude (contains projects/). null = not found / disabled. */
+  claudeDir?: string | null
+  /** Codex home, e.g. ~/.codex (contains sessions/). null = not found / disabled. */
+  codexDir?: string | null
+  /** Cursor dir, e.g. ~/.cursor (contains projects/<slug>/agent-transcripts/). null = not found / disabled. */
+  cursorDir?: string | null
   /** Resolved `orca` executable, or null when the Orca CLI source is disabled. */
   orcaCli: string | null
   /** Extra MCP server name prefixes to recognize (from --mcp-servers). */
@@ -134,7 +140,7 @@ export interface SourceBase {
 
 export type Unsubscribe = () => void
 
-/* Harness adapters (OpenCode, Copilot CLI, future Claude Code / Codex) ------------------------- */
+/* Harness adapters (OpenCode, Copilot CLI, Claude Code, Codex, Cursor) ------------------------- */
 
 /** Raw facts about one session as a harness knows them — before Orca joins and state rules. */
 export interface HarnessSession {

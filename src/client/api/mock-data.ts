@@ -52,9 +52,17 @@ export const MOCK_IDS = {
   done: 'ses_theme_refactor',
   idle: 'ses_bitrise_cache',
   copilot: '7c1e5a52-3b9d-4f0e-8a61-d2f4c9b07e13',
+  claude: '3f9a2c71-5e0b-4d8a-9c16-7b2e4f8d1a05',
+  claudeExplore: '3f9a2c71-5e0b-4d8a-9c16-7b2e4f8d1a05.agent-a7c41e',
+  codex: '0199e3b4-7a21-7c5d-9e08-4b6f1a2c3d4e',
+  cursor: 'c8d1e5f2-6a3b-4c7d-8e9f-0a1b2c3d4e5f',
   runBoard: 'run_board_01',
   runSpike: 'run_spike_02',
 } as const
+
+const PROVIDER: Partial<Record<Harness, string>> = { copilot: 'github-copilot', codex: 'openai' }
+const SOURCE_TAG: Record<Harness, string> = { opencode: 'opencode.part', copilot: 'copilot.events', claude: 'claude.jsonl', codex: 'codex.rollout', cursor: 'cursor.transcript', unknown: 'unknown' }
+export const sourceTagOf = (h: Harness): string => SOURCE_TAG[h]
 
 const ZERO_TOKENS: TokenUsage = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
 
@@ -140,7 +148,8 @@ interface SessionSeed {
  *
  * Roots: `ses_remote_start` (build, working, 6 subagents), `ses_paparazzi` (blocked, permission via
  * Orca hook), `ses_board_coord` (waiting on a question; coordinator of `run_board_01`),
- * `ses_theme_refactor` (done), `ses_bitrise_cache` (idle), Copilot UUID root (working).
+ * `ses_theme_refactor` (done), `ses_bitrise_cache` (idle), Copilot UUID root (working), Claude Code
+ * root (working, one Explore subagent), Codex root (done) and Cursor root (idle).
  */
 export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'healthy' | 'degraded' }): MockWorld {
   const now = opts.now
@@ -180,6 +189,13 @@ export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'h
     { id: I.copilot, harness: 'copilot', title: 'Add PR template checks to CI', agent: null, model: 'gpt-5.5', workspace: 'occ', state: 'working', stateSource: 'orca-hook', ageMin: 25, lastMin: 0.1,
       orca: { paneKey: 'tab_5:leaf_1', tabId: 'tab_5', terminalHandle: 'term_e5a0', terminalTitle: 'copilot', worktreeId: 'wt_occ_main', hookEvent: 'PostToolUse', hookState: 'working' },
       facts: [{ label: 'Premium requests', value: '12' }, { label: 'Session file', value: '~/.copilot/session-state/7c1e5a52…' }] },
+    { id: I.claude, harness: 'claude', title: 'Stream SSE frames through a bounded queue', agent: 'claude', model: 'claude-sonnet-4-5', workspace: 'occ', state: 'working', stateSource: 'orca-hook', ageMin: 34, lastMin: 0.2,
+      orca: { paneKey: 'tab_6:leaf_1', tabId: 'tab_6', terminalHandle: 'term_f2c8', terminalTitle: 'claude', worktreeId: 'wt_occ_main', hookEvent: 'PreToolUse', hookState: 'working' },
+      facts: [{ label: 'Claude Code version', value: '2.0.30' }, { label: 'Branch', value: 'main' }] },
+    { id: I.claudeExplore, harness: 'claude', parentId: I.claude, title: 'Find every SSE write path', agent: 'Explore', model: 'claude-haiku-4-5', workspace: 'occ', state: 'done', stateSource: 'parent-tool', ageMin: 30, lastMin: 26, spawn: { description: 'Find every SSE write path', type: 'Explore', status: 'completed' } },
+    { id: I.codex, harness: 'codex', title: 'Bump Gradle plugins and fix lint', agent: 'codex', model: 'gpt-5-codex', workspace: 'android', state: 'done', stateSource: 'transcript', ageMin: 75, lastMin: 22,
+      facts: [{ label: 'Codex version', value: '0.46.0' }, { label: 'Reasoning effort', value: 'medium' }] },
+    { id: I.cursor, harness: 'cursor', title: 'Explain the insights-agent retry config', agent: 'cursor', model: null, workspace: 'ipm', state: 'idle', stateSource: 'transcript', ageMin: 300, lastMin: 240 },
   ]
 
   for (const sd of seeds) {
@@ -191,7 +207,7 @@ export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'h
       : null
     const s: SessionSummary = {
       id: sd.id, harness: sd.harness ?? 'opencode', parentId: sd.parentId ?? null, rootId: sd.parentId ? parent!.id : sd.id, depth: sd.parentId ? 1 : 0,
-      title: sd.title, agent: sd.agent, model: sd.model ? { providerId: sd.harness === 'copilot' ? 'github-copilot' : 'anthropic', modelId: sd.model } : null,
+      title: sd.title, agent: sd.agent, model: sd.model ? { providerId: PROVIDER[sd.harness ?? 'opencode'] ?? 'anthropic', modelId: sd.model } : null,
       directory: ws.path, workspace: ws, createdAt: now - sd.ageMin * MIN, updatedAt: now - (sd.lastMin ?? sd.ageMin) * MIN,
       lastActivityAt: sd.lastMin == null ? null : now - sd.lastMin * MIN, archivedAt: null,
       state: sd.state, stateSource: sd.stateSource ?? 'transcript', stateSince: now - Math.min(sd.ageMin, sd.lastMin ?? 5) * MIN - 40_000,
@@ -214,7 +230,7 @@ export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'h
     advance(ms = 2000 + rnd() * 9000) { this.t += ms; return this }
     private idFor(): string {
       const n = ++seq
-      return this.s.harness === 'copilot' ? `copilot:${this.sid}:${n}` : `opencode:prt_${this.sid.slice(4, 12)}_${n}`
+      return this.s.harness === 'opencode' ? `opencode:prt_${this.sid.slice(4, 12)}_${n}` : `${this.s.harness}:${this.sid}:${n}`
     }
     message(role: 'user' | 'assistant', error: string | null = null) {
       const n = (msgCounter.get(this.sid) ?? 0) + 1
@@ -227,7 +243,7 @@ export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'h
       const id = p.id ?? this.idFor()
       const ev: ActivityEvent = {
         id, rev: p.endTs ?? this.t, harness: this.s.harness, sessionId: this.sid, rootId: this.s.rootId, messageId: this.msg, ts: this.t, endTs: null,
-        status: null, summary: null, tool: null, files: [], childSessionId: null, usage: null, links: [], source: this.s.harness === 'copilot' ? 'copilot.events' : 'opencode.part', detailRef: null, ...p,
+        status: null, summary: null, tool: null, files: [], childSessionId: null, usage: null, links: [], source: SOURCE_TAG[this.s.harness], detailRef: null, ...p,
       }
       if (detail) { world.details.set(id, { input: detail.input ?? null, output: detail.output ?? null, text: detail.text ?? null, error: detail.error ?? null }); ev.detailRef = id }
       world.events.push(ev)
@@ -450,6 +466,64 @@ export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'h
     s.say('Added `.github/workflows/pr-template.yml`; it fails when the Summary section is empty.')
   }
 
+  /* ── claude code ── */
+  {
+    const s = new Script(I.claude, 33)
+    s.prompt('SSE frames back up when a client is slow. Stream them through a bounded queue and drop to a resync frame on overflow.')
+    s.message('assistant')
+    s.think('Find every place that writes to the response first.\nThen add a per-client queue with a high-water mark.', 5000)
+    s.subagent(I.claudeExplore)
+    s.tool('Read', 'read', '/Users/dev/Development/orca-command-center/src/server/http/sse.ts', 'export function writeFrame(res, frame) { res.write(frame) }', { files: ['/Users/dev/Development/orca-command-center/src/server/http/sse.ts'] })
+    s.mcp('github', 'search_issues', '{"q":"repo:acme-org/orca-command-center sse backpressure"}', '1 issue: #41 SSE stalls on slow clients', { links: ['https://github.com/acme-org/orca-command-center/issues/41'] })
+    s.edit('/Users/dev/Development/orca-command-center/src/server/http/sse.ts', `--- a/src/server/http/sse.ts
++++ b/src/server/http/sse.ts
+@@ -1,3 +1,8 @@
+-export function writeFrame(res, frame) { res.write(frame) }
++export function writeFrame(client, frame) {
++  if (client.queued > HIGH_WATER) return client.resync()
++  client.queued++
++  if (!client.res.write(frame)) client.res.once('drain', () => client.flush())
++}
+`)
+    s.todo([['Map SSE write paths', 'completed'], ['Bounded per-client queue', 'in_progress'], ['Resync frame on overflow', 'pending']])
+    s.tool('Bash', 'shell', 'npm test -- sse', 'Test Files  3 passed (3)')
+    s.step(12_400, 820, 0)
+  }
+  {
+    const s = new Script(I.claudeExplore, 30)
+    s.prompt('List every code path that writes SSE frames to a response.')
+    s.message('assistant')
+    s.tool('Grep', 'search', 'res.write', '/Users/dev/Development/orca-command-center/src/server/http/sse.ts:12\n/Users/dev/Development/orca-command-center/src/server/hub/hub.ts:88')
+    s.say('Two write paths: `sse.ts` writeFrame (line 12) and the hub replay in `hub.ts` (line 88).')
+  }
+  /* ── codex ── */
+  {
+    const s = new Script(I.codex, 74)
+    s.prompt('Bump the Android Gradle plugin to 9.0 and fix any new lint errors.')
+    s.message('assistant')
+    s.think('**Checking version catalog** — AGP lives in gradle/libs.versions.toml.', 3000)
+    s.tool('shell', 'shell', 'rg -n "agp" gradle/libs.versions.toml', 'gradle/libs.versions.toml:3:agp = "8.7.3"')
+    s.edit(f('gradle/libs.versions.toml'), `--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -1,4 +1,4 @@
+ [versions]
+-agp = "8.7.3"
++agp = "9.0.0"
+ kotlin = "2.2.20"
+`)
+    s.tool('shell', 'shell', './gradlew lintDebug', 'Lint found 2 errors: UnusedResources (2)', { status: 'error', error: 'exit code 1', dur: 52_000 })
+    s.tool('shell', 'shell', './gradlew lintDebug', 'BUILD SUCCESSFUL in 48s', { dur: 48_000 })
+    s.say('AGP is on 9.0.0; removed two unused drawables flagged by lint. `./gradlew lintDebug` passes.')
+  }
+  /* ── cursor ── */
+  {
+    const s = new Script(I.cursor, 299)
+    s.prompt('How does the insights-agent decide when to retry a failed upload?')
+    s.message('assistant')
+    s.tool('Grep', 'search', 'retryUpload', '/Users/dev/Development/insights-agent/src/upload/queue.ts:57')
+    s.say('Uploads retry up to 3 times with a 2 s fixed delay (`queue.ts`, line 57); 4xx responses are not retried.')
+  }
+
   /* ───────── derive session aggregates ───────── */
   recomputeAll(world)
 
@@ -462,6 +536,7 @@ export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'h
   cur(I.coderViewModel, 'edit', 'RemoteStartViewModel.kt', 'file-change')
   cur(I.exploreBackoff, 'Thinking', null as unknown as string, 'thinking')
   cur(I.copilot, 'view', '.github/workflows/pr-template.yml')
+  cur(I.claude, 'Bash', 'npm test -- sse')
   cur(I.blocked, 'bash', './gradlew recordPaparazziDebug', 'permission')
   cur(I.waiting, 'question', 'Persist card ordering where?', 'tool')
   world.sessions.get(I.exploreBackoff)!.current!.detail = null
@@ -482,10 +557,10 @@ export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'h
   }))
   const terminals: TerminalInfo[] = [...world.sessions.values()].filter((s) => s.orca?.terminalHandle).map((s) => ({
     handle: s.orca!.terminalHandle!, worktreeId: s.orca!.worktreeId, worktreePath: s.workspace?.path ?? null, tabId: s.orca!.tabId, leafId: 'leaf_1', paneKey: s.orca!.paneKey,
-    title: s.orca!.terminalTitle, agentIdentity: s.harness === 'copilot' ? 'copilot' : 'opencode', connected: true, lastOutputAt: now - 5000, preview: `${s.title.slice(0, 60)} …`, sessionId: s.id,
+    title: s.orca!.terminalTitle, agentIdentity: s.harness, connected: true, lastOutputAt: now - 5000, preview: `${s.title.slice(0, 60)} …`, sessionId: s.id,
   }))
   const hooks: HookEntry[] = [...world.sessions.values()].filter((s) => s.orca?.paneKey).map((s) => ({
-    paneKey: s.orca!.paneKey!, tabId: s.orca!.tabId, worktreeId: s.orca!.worktreeId, agent: s.harness === 'copilot' ? 'copilot' : 'opencode', hookEvent: s.orca!.hookEvent, state: s.orca!.hookState,
+    paneKey: s.orca!.paneKey!, tabId: s.orca!.tabId, worktreeId: s.orca!.worktreeId, agent: s.harness, hookEvent: s.orca!.hookEvent, state: s.orca!.hookState,
     prompt: s.lastPrompt, lastAssistantMessage: s.lastMessage, providerSessionId: s.id, receivedAt: s.orca!.hookAt, stateStartedAt: s.stateSince,
   }))
   const orcaRunning = scenario === 'healthy'
@@ -512,15 +587,23 @@ export function buildMockWorld(opts: { now: number; seed?: number; scenario?: 'h
   world.sources = [
     ok('opencode', 'opencode.db', '~/.local/share/opencode/opencode.db', '1.18.7'),
     ok('copilot', 'copilot', '~/.copilot/session-state', '0.0.402'),
+    ok('claude', 'Claude Code', '~/.claude/projects', '2.0.30'),
+    ok('codex', 'Codex', '~/.codex/sessions', '0.46.0'),
+    ok('cursor', 'Cursor', '~/.cursor/projects', null),
     ok('orca-cli', 'orca-cli', '/usr/local/bin/orca', '1.4.2'),
     ok('orca-hooks', 'hooks', '~/Library/Application Support/orca/agent-hooks/last-status.json', null),
     ok('orca-orchestration', 'orchestration', '~/Library/Application Support/orca/orchestration.db', 'v43'),
   ]
   if (scenario === 'degraded') {
-    world.sources[1] = { ...world.sources[1], status: 'missing', detail: 'Copilot CLI not found (~/.copilot) — Copilot sessions hidden.' }
-    world.sources[2] = { ...world.sources[2], status: 'error', detail: 'orca CLI exited with code 1: runtime not found' }
-    world.sources[4] = { ...world.sources[4], status: 'degraded', version: 'v44', detail: 'orchestration.db is from a newer Orca schema (v44).' }
-    world.sources[0] = { ...world.sources[0], status: 'degraded', detail: 'session.workspace_id column missing — grouping by directory.' }
+    const patch = (id: SourceHealth['id'], p: Partial<SourceHealth>) => {
+      const i = world.sources.findIndex((x) => x.id === id)
+      world.sources[i] = { ...world.sources[i]!, ...p }
+    }
+    patch('copilot', { status: 'missing', detail: 'Copilot CLI not found (~/.copilot) — Copilot sessions hidden.' })
+    patch('orca-cli', { status: 'error', detail: 'orca CLI exited with code 1: runtime not found' })
+    patch('orca-orchestration', { status: 'degraded', version: 'v44', detail: 'orchestration.db is from a newer Orca schema (v44).' })
+    patch('opencode', { status: 'degraded', detail: 'session.workspace_id column missing — grouping by directory.' })
+    patch('cursor', { status: 'missing', path: null, detail: 'Cursor directory not found (~/.cursor)' })
   }
   return world
 }

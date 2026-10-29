@@ -4,17 +4,25 @@
  * `?mock=1&degraded=1` serves a degraded scenario (Orca stopped, missing/erroring sources, newer schema).
  */
 import {
-  LIMITS, type ActivityEvent, type ActivityPage, type ApiResponses, type ApiRoute, type BootstrapPayload, type FleetStats,
+  LIMITS, type ActivityEvent, type Harness, type ActivityPage, type ApiResponses, type ApiRoute, type BootstrapPayload, type FleetStats,
   type SessionDetail, type SessionSummary, type SessionTree, type StreamEvent, type TranscriptMessage, type TranscriptPage,
   type PartDetail, type ActivityKind, type StreamPayload,
 } from '../../shared/contract'
 import {
   artifactsOf, buildMockWorld, fileChangesOf, metaOf, MOCK_IDS, mulberry32, orchestrationSummary, recomputeAll, recomputeSession,
-  toolInfo, type MockWorld,
+  sourceTagOf, toolInfo, type MockWorld,
 } from './mock-data'
 import { ApiRequestError, isMockMode, type GetOptions } from './types'
 
 export { MOCK_IDS } from './mock-data'
+
+const PROVENANCE: Partial<Record<Harness, string[]>> = {
+  opencode: ['opencode.db · session', 'opencode.db · message/part'],
+  copilot: ['copilot · session-state/events.jsonl', 'copilot · workspace.yaml'],
+  claude: ['claude projects · <session>.jsonl'],
+  codex: ['codex sessions · rollout-*.jsonl'],
+  cursor: ['cursor projects · agent-transcripts/*.jsonl'],
+}
 
 export interface MockBackend {
   /** Same contract as `api.get`. */
@@ -191,7 +199,7 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     return {
       session: s, ancestors, children: s.childIds.map((c) => world.sessions.get(c)!), todos: world.todos.get(id) ?? [],
       fileChanges: fileChangesOf(world).filter((c) => c.sessionId === id), artifacts: artifactsOf(world).filter((a) => a.sessionId === id),
-      provenance: [s.harness === 'copilot' ? 'copilot · session-state/events.jsonl' : 'opencode.db · session', s.harness === 'copilot' ? 'copilot · workspace.yaml' : 'opencode.db · message/part', ...(s.orca?.paneKey ? ['orca hooks · last-status.json'] : []), ...(s.parentId ? ['parent task tool call'] : [])],
+      provenance: [...(PROVENANCE[s.harness] ?? [`${s.harness} · session`]), ...(s.orca?.paneKey ? ['orca hooks · last-status.json'] : []), ...(s.parentId ? ['parent task tool call'] : [])],
     }
   }
 
@@ -281,9 +289,9 @@ export function createMockBackend(opts: MockOptions = {}): MockBackend {
     const s = world.sessions.get(sessionId)!
     const t = nowMs()
     const ev: ActivityEvent = {
-      id: s.harness === 'copilot' ? `copilot:${sessionId}:live${++evN}` : `opencode:prt_live_${++evN}`, rev: t, harness: s.harness, sessionId, rootId: s.rootId,
+      id: s.harness === 'opencode' ? `opencode:prt_live_${++evN}` : `${s.harness}:${sessionId}:live${++evN}`, rev: t, harness: s.harness, sessionId, rootId: s.rootId,
       messageId: [...world.messages.values()].filter((m) => m.sessionId === sessionId && m.role === 'assistant').pop()?.id ?? null, ts: t, endTs: null, status: null, summary: null, tool: null, files: [], childSessionId: null,
-      usage: null, links: [], source: s.harness === 'copilot' ? 'copilot.events' : 'opencode.part', detailRef: null, ...p,
+      usage: null, links: [], source: sourceTagOf(s.harness), detailRef: null, ...p,
     }
     world.events.push(ev)
     world.details.set(ev.id, { input: ev.tool ? { command: ev.tool.input } : null, output: ev.tool?.output ?? null, text: ev.summary, error: ev.tool?.error ?? null })
