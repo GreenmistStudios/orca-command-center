@@ -9,6 +9,7 @@ import {
 import { api } from '../api/client'
 import { connectStream, type StreamHandle } from '../api/sse'
 import { getStored, setStored } from '../lib/storage'
+import { tokenIO, tokenRates } from '../lib/tokens'
 import { addNotice } from '../shell/notices'
 import { selectDescendants, selectRootSessions } from './selectors'
 import { readUrlSelection, startUrlSync } from './url'
@@ -360,7 +361,11 @@ export const useOcc = create<OccState>()(
         if (get().bootstrapped) { cacheGen++; inflight.clear() }
         set((s) => {
           const sessions: Record<string, SessionSummary> = {}
-          for (const x of b.sessions) sessions[x.id] = x
+          const at = Date.now()
+          for (const x of b.sessions) {
+            sessions[x.id] = x
+            tokenRates.record(x.id, at, tokenIO(x.tokens).output)
+          }
           const byId: Record<string, ActivityEvent> = {}
           const sorted = [...b.activity].sort((a, c) => a.ts - c.ts)
           const capped = sorted.slice(-ACTIVITY_RING_MAX)
@@ -436,8 +441,10 @@ export const useOcc = create<OccState>()(
               const sessions = { ...s.sessions }
               let trees = s.trees
               let details = s.details
+              const at = Date.now()
               for (const x of e.sessions) {
                 sessions[x.id] = x
+                tokenRates.record(x.id, at, tokenIO(x.tokens).output)
                 const tr = trees[x.rootId]
                 if (tr?.data) {
                   const nodes = tr.data.nodes.slice()
@@ -459,6 +466,7 @@ export const useOcc = create<OccState>()(
               for (const id of e.removed) {
                 const old = sessions[id]
                 delete sessions[id]
+                tokenRates.forget(id)
                 const tr = old ? trees[old.rootId] : undefined
                 if (old && tr?.data) {
                   trees = { ...trees, [old.rootId]: { ...tr, data: { ...tr.data, nodes: tr.data.nodes.filter((n) => n.id !== id), edges: tr.data.edges.filter((ed) => ed.from !== id && ed.to !== id) } } }

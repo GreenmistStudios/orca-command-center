@@ -1,10 +1,11 @@
 import { ChevronRight, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { HARNESS_META, type SessionSummary } from '../../shared/contract'
-import { formatCost, formatRelative, formatTokens, shortModel } from '../lib/format'
+import { formatCost, formatRelative, shortModel } from '../lib/format'
+import { useNow } from '../hooks/useNow'
 import { selectSessionAncestors } from '../state/selectors'
 import { useOcc } from '../state/store'
-import { AgentMonogram, CopyButton, Duration, EmptyState, HarnessTile, IconButton, STATE_LABEL, StatusPill, Segmented, Tooltip, stateTone, toneClasses } from '../ui'
+import { AgentMonogram, CopyButton, Duration, EmptyState, HarnessTile, IconButton, STATE_LABEL, StatusPill, Segmented, TokenMeter, Tooltip, stateTone, toneClasses } from '../ui'
 import { ErrorBox, Skeleton } from './common'
 import { FilesTab } from './FilesTab'
 import { InfoTab } from './InfoTab'
@@ -31,7 +32,7 @@ function Header({ s }: { s: SessionSummary }) {
   const ancestors = useOcc((st) => selectSessionAncestors(st, s.id))
   const selectSession = useOcc((st) => st.selectSession)
   const tone = stateTone(s.state)
-  const tokens = s.tokens.input + s.tokens.output
+  const now = useNow(s.state === 'working' ? 5000 : 60_000)
   return (
     <header className="border-panel-border/60 border-b p-3" style={{ background: `color-mix(in oklch, ${toneClasses(tone).accentVar} 8%, transparent)` }} data-testid="inspector-header">
       {ancestors.length > 0 && (
@@ -61,7 +62,7 @@ function Header({ s }: { s: SessionSummary }) {
         {s.agent && <span className="inline-flex items-center gap-1"><AgentMonogram agent={s.agent} size={17} />{s.agent}</span>}
         {s.model && <span className="font-mono">{shortModel(s.model.modelId)}</span>}
         <Duration start={s.createdAt} end={s.live ? null : s.lastActivityAt ?? s.updatedAt} className="text-muted-foreground tabular-nums" />
-        <span className="text-muted-foreground tabular-nums">{formatTokens(tokens)} tok</span>
+        <TokenMeter s={s} now={now} className="text-muted-foreground" />
         <span className="text-muted-foreground tabular-nums">{formatCost(s.cost)}</span>
         <span className="text-muted-foreground inline-flex items-center gap-0.5 font-mono text-[10px]">{s.id.slice(0, 14)}<CopyButton text={s.id} label="Copy session id" className="size-5" /></span>
       </div>

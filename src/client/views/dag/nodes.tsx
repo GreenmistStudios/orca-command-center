@@ -4,7 +4,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { HARNESS_META, type SessionSummary } from '../../../shared/contract'
 import { cn } from '../../lib/cn'
 import { formatCost, formatDuration, formatRelative } from '../../lib/format'
-import { agentColorVar, AgentMonogram, STATE_LABEL, stateTone, toneClasses, useSpotlight } from '../../ui'
+import { agentColorVar, AgentMonogram, STATE_LABEL, stateTone, TokenMeter, toneClasses, useSpotlight } from '../../ui'
 import type { Direction, TaskInfo } from './model'
 import type { OrchTask } from '../../../shared/contract'
 
@@ -86,10 +86,13 @@ function SessionNodeImpl({ data }: NodeProps) {
         <span className="ml-auto text-[9px] tabular-nums">{elapsed}</span>
       </div>
       <div className="relative line-clamp-2 text-[11.5px] leading-snug font-medium">{s.title}</div>
-      <div className="relative mt-auto truncate font-mono text-[9.5px] opacity-70">
-        {s.live && s.current
-          ? `▸ ${s.current.label}${s.current.detail ? ` · ${s.current.detail}` : ''}`
-          : c ? `${c.tools} tools · ${c.fileChanges} files · ${formatCost(s.cost)}` : formatCost(s.cost)}
+      <div className="relative mt-auto flex min-w-0 items-baseline gap-2 font-mono text-[9.5px]">
+        <span className="min-w-0 truncate opacity-70">
+          {s.live && s.current
+            ? `▸ ${s.current.label}${s.current.detail ? ` · ${s.current.detail}` : ''}`
+            : c ? `${c.tools} tools · ${c.fileChanges} files · ${formatCost(s.cost)}` : formatCost(s.cost)}
+        </span>
+        <TokenMeter s={s} now={now} className="ml-auto shrink-0" />
       </div>
     </motion.div>
   )

@@ -10,6 +10,7 @@ import {
   type FileDiff,
   type PartDetail,
   type SessionCounters,
+  type TokenUsage,
   type ToolCallInfo,
   type TranscriptMessage,
 } from '../../../shared/contract.js'
@@ -103,6 +104,9 @@ export class SessionModel {
   private currentTurn: string | null = null
   private readonly pending = new Map<string, { ts: number; label: string }>()
   private readonly running = new Map<string, number>()
+  /** Normalized per-call usage keyed by the call's usage id, so a replayed record is not counted twice. */
+  private readonly usage = new Map<string, TokenUsage>()
+  private readonly tokens: TokenUsage = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
 
   constructor(
     readonly id: string,
@@ -228,6 +232,8 @@ export class SessionModel {
         return this.permRequested(d, ts)
       case 'permission.completed':
         return this.permCompleted(d, ts)
+      case 'session.usage_record':
+        return this.usageRecord(d, eid)
       case 'session.usage_checkpoint': {
         const n = d.totalPremiumRequests
         if (typeof n === 'number' || typeof n === 'string') this.premium = String(n)
@@ -263,6 +269,32 @@ export class SessionModel {
       default:
         if (type.startsWith('subagent.')) this.subagent(type, d, ts, eid)
     }
+  }
+
+  /**
+   * One LLM call. Copilot's `inputTokens` includes cache reads and writes, and `outputTokens`
+   * includes reasoning; both are split out so `TokenUsage` fields never overlap (as for Codex).
+   */
+  private usageRecord(d: Obj, eid: string): void {
+    const u = isObj(d.usage) ? d.usage : null
+    if (!u) return
+    const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
+    const acct = isObj(u.accounting) ? u.accounting : null
+    const key = (acct && str(acct.usageId)) ?? str(u.apiCallId) ?? eid
+    const cacheRead = n(u.cacheReadTokens)
+    const cacheWrite = n(u.cacheWriteTokens)
+    const reasoning = n(u.reasoningTokens)
+    const rec: TokenUsage = {
+      input: Math.max(0, n(u.inputTokens) - cacheRead - cacheWrite),
+      output: Math.max(0, n(u.outputTokens) - reasoning),
+      reasoning,
+      cacheRead,
+      cacheWrite,
+    }
+    const prev = this.usage.get(key)
+    this.usage.set(key, rec)
+    const t = this.tokens
+    for (const k of ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite'] as const) t[k] += rec[k] - (prev?.[k] ?? 0)
   }
 
   private subagent(type: string, d: Obj, ts: number, eid: string): void {
@@ -583,7 +615,7 @@ export class SessionModel {
       updatedAt,
       lastActivityAt: this.lastTs || null,
       archivedAt: null,
-      tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      tokens: { ...this.tokens },
       cost: 0,
       spawn: null,
       transcriptState: this.state(),

@@ -7,6 +7,32 @@ import { Segmented, TabList } from './Segmented'
 import { AgentMonogram } from './Monogram'
 import { IconButton } from './Button'
 import { Duration } from './Time'
+import { TokenMeter } from './TokenMeter'
+import { tokenRates } from '../lib/tokens'
+import type { SessionSummary } from '../../shared/contract'
+
+describe('TokenMeter', () => {
+  const zero = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+  const sess = (o: Partial<SessionSummary>) => ({ id: 'tm', state: 'working', tokens: zero, ...o }) as SessionSummary
+
+  it('renders nothing without tokens', () => {
+    const { container } = render(<TokenMeter s={sess({})} now={0} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('shows in/out and the output rate only while working', () => {
+    tokenRates.forget('tm')
+    tokenRates.record('tm', 0, 0)
+    tokenRates.record('tm', 60_000, 1500)
+    const tokens = { input: 2000, output: 1200, reasoning: 300, cacheRead: 40_000, cacheWrite: 500 }
+    const { rerender } = render(<TokenMeter s={sess({ tokens })} now={60_000} />)
+    expect(screen.getByTestId('token-meter')).toHaveTextContent('↑42.5k↓1.5k· 1.5k/m')
+    expect(screen.getByTestId('token-meter')).toHaveAttribute('title', expect.stringContaining('Cache read 40,000'))
+    rerender(<TokenMeter s={sess({ tokens, state: 'idle' })} now={60_000} />)
+    expect(screen.queryByTestId('token-rate')).toBeNull()
+    tokenRates.forget('tm')
+  })
+})
 
 describe('ui primitives', () => {
   it('Markdownish renders safe markup without raw HTML', () => {

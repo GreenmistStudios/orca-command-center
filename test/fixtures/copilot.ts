@@ -64,6 +64,8 @@ export interface CopilotFixture {
     permRequested(requestId: string, o: { toolCallId?: string; kind?: string; command?: string }): RawEvent
     permCompleted(requestId: string, o?: { toolCallId?: string; kind?: string }): RawEvent
     usage(premium: number): RawEvent
+    /** One LLM call; `input` includes cache reads/writes and `output` includes reasoning, as Copilot logs them. */
+    usageRecord(usageId: string, t: { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number }): RawEvent
     autoMode(chosen: string): RawEvent
     error(message: string): RawEvent
     abort(reason: string): RawEvent
@@ -163,6 +165,20 @@ export function createCopilotFixture(root: string, opts: { startMs?: number } = 
       }),
     permCompleted: (requestId, o = {}) => event('permission.completed', { requestId, toolCallId: o.toolCallId, result: { kind: o.kind ?? 'approved' } }),
     usage: (premium) => event('session.usage_checkpoint', { totalPremiumRequests: premium, totalNanoAiu: 0 }),
+    usageRecord: (usageId, t) =>
+      event('session.usage_record', {
+        usage: {
+          model: 'claude-sonnet-5.5',
+          inputTokens: t.input,
+          outputTokens: t.output,
+          cacheReadTokens: t.cacheRead ?? 0,
+          cacheWriteTokens: t.cacheWrite ?? 0,
+          reasoningTokens: t.reasoning ?? 0,
+          cost: 1,
+          apiCallId: usageId,
+          accounting: { sourceSessionId: 'x', sequence: 1, usageId },
+        },
+      }),
     autoMode: (chosen) => event('session.auto_mode_resolved', { chosenModel: chosen, routingMethod: 'router' }),
     error: (message) => event('session.error', { errorType: 'query', message }),
     abort: (reason) => event('abort', { reason }),
@@ -232,6 +248,8 @@ export interface CopilotFleet {
 /**
  * finishedId: done session (workspace name "Fix the login bug"; bash, view, rg, create, edit, apply_patch,
  *   github-mcp-server-get_issue, one failed tool; no lock) → transcriptState 'done', processAlive false.
+ *   Two usage records (the second replayed once) → tokens input 6, output 521, reasoning 40,
+ *   cacheRead 30 274, cacheWrite 32 446.
  * liveId: no workspace name; open turn, running bash and a pending permission request, live lock
  *   (process.pid) → transcriptState 'waiting', processAlive true, current = bash.
  * All timestamps lie within the last ~10 minutes of `now`.
@@ -253,6 +271,7 @@ export function seedCopilotFleet(root: string, opts: { now?: number } = {}): Cop
       e.user('Please fix the login bug in src/app.ts. See https://example.com/issues/42'),
       e.turnStart('1'),
       e.assistant('1', { reasoning: 'I should look at the file first.', content: 'Looking at the code.' }),
+      e.usageRecord('u-1', { input: 30_278, output: 299, cacheWrite: 30_274 }),
       e.toolStart(calls.view, 'view', { path: '/work/repo/src/app.ts', view_range: [1, 40] }),
       e.toolComplete(calls.view, { result: { content: 'line 1\nline 2', detailedContent: 'line 1\nline 2' } }),
       e.toolStart(calls.rg, 'rg', { pattern: 'login', path: '/work/repo' }),
@@ -272,6 +291,8 @@ export function seedCopilotFleet(root: string, opts: { now?: number } = {}): Cop
       e.toolStart(calls.failed, 'bash', { command: 'false' }),
       e.toolComplete(calls.failed, { success: false, error: { message: 'exit code 1' } }),
       e.assistant('1', { content: 'Fixed the bug.' }),
+      e.usageRecord('u-2', { input: 32_448, output: 262, cacheRead: 30_274, cacheWrite: 2_172, reasoning: 40 }),
+      e.usageRecord('u-2', { input: 32_448, output: 262, cacheRead: 30_274, cacheWrite: 2_172, reasoning: 40 }),
       e.turnEnd('1'),
       e.usage(3),
     ],

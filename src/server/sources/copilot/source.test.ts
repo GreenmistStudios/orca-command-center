@@ -136,6 +136,13 @@ describe('session derivation', () => {
     ])
   })
 
+  it('tokens: usage records sum per call, split cache and reasoning out, ignore replays', () => {
+    // u-1: in 30 278 (4 + cacheWrite 30 274), out 299. u-2 (logged twice): in 32 448
+    // (2 + cacheRead 30 274 + cacheWrite 2 172), out 262 (222 + reasoning 40).
+    expect(src.getSession(fleet.finishedId)!.tokens).toEqual({ input: 6, output: 521, reasoning: 40, cacheRead: 30_274, cacheWrite: 32_446 })
+    expect(src.getSession(fleet.liveId)!.tokens).toEqual({ input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 })
+  })
+
   it('live session: waiting on permission, running bash, process alive, title from prompt', () => {
     const s = src.getSession(fleet.liveId)!
     expect(s.title).toBe('Run the full test suite')
@@ -351,6 +358,12 @@ describe('incremental tail', () => {
     expect(merged).toHaveLength(1)
     expect(merged[0]).toMatchObject({ id: `copilot:${id}:tool:c1`, status: 'completed' })
     expect(src.getSession(id)!.transcriptState).toBe('done')
+
+    // a usage record updates the session's tokens live
+    updates.length = 0
+    fx.append(id, [fx.ev.usageRecord('live-1', { input: 1200, output: 300, cacheRead: 1000, reasoning: 100 })])
+    await until(() => updates.some((u) => u.type === 'sessions' && u.sessions.some((s) => s.id === id && s.tokens.output > 0)))
+    expect(src.getSession(id)!.tokens).toEqual({ input: 200, output: 200, reasoning: 100, cacheRead: 1000, cacheWrite: 0 })
 
     // lock removal flips processAlive
     updates.length = 0

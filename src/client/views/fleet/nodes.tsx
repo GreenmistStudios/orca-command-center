@@ -4,7 +4,7 @@ import { memo, type KeyboardEvent, type ReactNode } from 'react'
 import { HARNESS_META } from '../../../shared/contract'
 import { cn } from '../../lib/cn'
 import { formatCost, formatRelative, shortModel } from '../../lib/format'
-import { agentColorVar, HarnessTile, IconButton, orchStatusTone, StateDot, STATE_LABEL, stateTone, toneClasses } from '../../ui'
+import { agentColorVar, HarnessTile, IconButton, orchStatusTone, StateDot, STATE_LABEL, stateTone, TokenMeter, toneClasses } from '../../ui'
 import type { Direction } from '../dag/model'
 import type { FleetCounts, FleetNodeData } from './model'
 
@@ -138,9 +138,12 @@ function SessionNodeImpl({ data }: NodeProps) {
         </IconButton>
       </div>
       <div className="line-clamp-1 text-[11.5px] leading-snug font-medium">{s.title}</div>
-      <div className="mt-auto truncate font-mono text-[9.5px] opacity-70">
-        {[s.agent, shortModel(s.model?.modelId)].filter(Boolean).join(' · ') || '—'}
-        {subs > 0 && ` · ${subs} subagent${subs === 1 ? '' : 's'} (${d.workingDescendants} working)`}
+      <div className="mt-auto flex min-w-0 items-baseline gap-2 font-mono text-[9.5px]">
+        <span className="min-w-0 truncate opacity-70">
+          {[s.agent, shortModel(s.model?.modelId)].filter(Boolean).join(' · ') || '—'}
+          {subs > 0 && ` · ${subs} subagent${subs === 1 ? '' : 's'} (${d.workingDescendants} working)`}
+        </span>
+        <TokenMeter s={s} now={r.now} className="ml-auto shrink-0" />
       </div>
     </Shell>
   )
